@@ -2,6 +2,12 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
 export async function updateSession(request: NextRequest) {
+  // When Supabase isn't configured (no env vars), skip auth entirely so the
+  // app can run in demo mode with sample data.
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+    return NextResponse.next({ request })
+  }
+
   let supabaseResponse = NextResponse.next({
     request,
   })
@@ -62,7 +68,7 @@ export async function updateSession(request: NextRequest) {
   //    the cookies!
   // 4. Finally:
   //    return myNewResponse
-  // If this is not done, you may be causing the browser and server to go out
+  // If this is not done, you may be causing the browser and server to get out
   // of sync and terminate the user's session prematurely!
 
   return supabaseResponse
