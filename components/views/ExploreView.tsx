@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '@/lib/store';
 import { useNav } from '@/components/app/nav';
 import { Icon } from '@/components/ui/Icons';
@@ -9,11 +9,13 @@ import PostCard from '@/components/post/PostCard';
 import { TRENDING, ME_ID } from '@/lib/data/sample';
 
 export default function ExploreView({ initialQuery = '' }: { initialQuery?: string }) {
-  const { posts, users, isFollowing, toggleFollow, toast, settings } = useStore();
+  const store = useStore();
+  const { posts, users, isFollowing, toggleFollow, toast, settings, trackSearch } = store;
   const { navigate } = useNav();
   const [query, setQuery] = useState(initialQuery);
   const [scope, setScope] = useState<'all' | 'people' | 'posts'>('all');
   const [loading, setLoading] = useState(true);
+  const searchTimer = useRef<number | null>(null);
 
   useEffect(() => {
     const t = window.setTimeout(() => setLoading(false), 450);
@@ -23,6 +25,17 @@ export default function ExploreView({ initialQuery = '' }: { initialQuery?: stri
   useEffect(() => {
     setQuery(initialQuery);
   }, [initialQuery]);
+
+  // Every meaningful search trains the recommendation engine (weight 2.5)
+  useEffect(() => {
+    if (searchTimer.current) window.clearTimeout(searchTimer.current);
+    const q = query.trim();
+    if (q.length < 3) return;
+    searchTimer.current = window.setTimeout(() => trackSearch(q), 900);
+    return () => {
+      if (searchTimer.current) window.clearTimeout(searchTimer.current);
+    };
+  }, [query, trackSearch]);
 
   const q = query.trim().toLowerCase();
 
@@ -121,7 +134,7 @@ export default function ExploreView({ initialQuery = '' }: { initialQuery?: stri
           {showPeople && (
             <div className="mb-6">
               <h3 className="text-sm font-bold text-[var(--text)] mb-3">
-                {q ? `People matching “${query.trim()}”` : 'People to follow'}
+                {q ? `People matching “${query.trim()}”` : 'People to support'}
               </h3>
               {people.length === 0 ? (
                 <p className="text-sm text-[var(--muted)] bg-[var(--card)] border border-[var(--border)] rounded-2xl px-4 py-6 text-center">
@@ -144,7 +157,7 @@ export default function ExploreView({ initialQuery = '' }: { initialQuery?: stri
                         following={isFollowing(u.id)}
                         onToggle={() => {
                           toggleFollow(u.id);
-                          toast(isFollowing(u.id) ? `Unfollowed ${u.name}` : `You're now supporting ${u.name} 💚`);
+                          toast(isFollowing(u.id) ? `Stopped supporting ${u.name}` : `You're now supporting ${u.name} 💚`);
                         }}
                       />
                     </div>

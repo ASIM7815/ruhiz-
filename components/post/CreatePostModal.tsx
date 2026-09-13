@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { useStore } from '@/lib/store';
 import { Icon } from '@/components/ui/Icons';
 import { Modal, ModalHeader, Spinner } from '@/components/ui/Primitives';
@@ -8,6 +8,8 @@ import { uploadMedia, fileToDataURL } from '@/lib/upload';
 import { TOPICS } from '@/lib/data/sample';
 import type { PostType } from '@/lib/types';
 import { formatBytes } from '@/lib/format';
+import { classifyPost } from '@/lib/recsys/classifier';
+import { getProblem } from '@/lib/recsys/problems';
 
 interface Props {
   open: boolean;
@@ -109,6 +111,11 @@ function Composer({
   const [error, setError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const classified = useMemo(
+    () => classifyPost(text, topics).map((p) => getProblem(p.id)).filter(Boolean) as { id: string; label: string; emoji: string }[],
+    [text, topics]
+  );
+
   const maxMB = type === 'video' ? 50 : 10;
   const accept = type === 'video' ? 'video/mp4,video/quicktime,video/webm' : 'image/jpeg,image/png,image/gif,image/webp';
 
@@ -136,19 +143,19 @@ function Composer({
     setUploading(true);
     setProgress(5);
     try {
-      let mediaUrl: string | undefined;
+      let mediaKey: string | undefined;
       let storage = 'local';
       if (file) {
-        const res = await uploadMedia(file, type === 'video' ? 'video' : 'image', setProgress);
-        mediaUrl = res.url;
+        const res = await uploadMedia(file, type === 'video' ? 'post-video' : 'post-image', setProgress);
+        mediaKey = res.key;
         storage = res.storage;
       }
       setProgress(95);
       await store.createPost({
         type,
         text: text.trim(),
-        image: type === 'photo' ? mediaUrl : undefined,
-        video: type === 'video' ? mediaUrl : undefined,
+        image: type === 'photo' ? mediaKey : undefined,
+        video: type === 'video' ? mediaKey : undefined,
         topics,
       });
       store.toast(
@@ -274,6 +281,18 @@ function Composer({
           ))}
         </div>
       </div>
+
+      {/* Recommendation preview — deterministic, computed as you type */}
+      {classified.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
+          <span className="font-medium">Ruhiz will share this with people who care about:</span>
+          {classified.map((c) => (
+            <span key={c.id} className="inline-flex items-center gap-1 px-2 py-1 bg-[var(--brand-soft)] text-[var(--brand)] rounded-full font-medium">
+              <span aria-hidden>{c.emoji}</span> {c.label}
+            </span>
+          ))}
+        </div>
+      )}
 
       {error && <p className="text-sm text-[var(--danger)] bg-[var(--danger-soft)] rounded-xl px-4 py-2.5">{error}</p>}
 

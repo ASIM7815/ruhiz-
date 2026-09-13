@@ -3,6 +3,7 @@
 import React, { useEffect } from 'react';
 import { Icon } from './Icons';
 import { initials } from '@/lib/format';
+import { useMediaUrl } from './Media';
 import type { UserProfile } from '@/lib/types';
 
 /* ------------------------------- Avatar ------------------------------ */
@@ -21,6 +22,7 @@ export function Avatar({
   className?: string;
 }) {
   const hue = user.avatarHue ?? 152;
+  const avatarUrl = useMediaUrl(user.avatar);
   const Comp = onClick ? 'button' : 'div';
   return (
     <Comp
@@ -28,9 +30,9 @@ export function Avatar({
       className={`relative rounded-full overflow-hidden flex-shrink-0 ${ring ? 'ring-2 ring-[var(--card)]' : ''} ${onClick ? 'cursor-pointer hover:opacity-90 transition-opacity' : ''} ${className}`}
       style={{ width: size, height: size }}
     >
-      {user.avatar ? (
+      {avatarUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={user.avatar} alt={user.name} className="w-full h-full object-cover" />
+        <img src={avatarUrl} alt={user.name} className="w-full h-full object-cover" />
       ) : (
         <div
           className="w-full h-full flex items-center justify-center text-white font-semibold select-none"
@@ -309,7 +311,7 @@ export function GhostButton({
   );
 }
 
-/* ------------------------------ FollowBtn ---------------------------- */
+/* ---------------------------- SupportButton --------------------------- */
 
 export function FollowButton({
   following,
@@ -329,7 +331,7 @@ export function FollowButton({
           : 'bg-[var(--brand)] text-white hover:bg-[var(--brand-dark)]'
       }`}
     >
-      {following ? 'Following' : 'Follow'}
+      {following ? 'Supporting' : 'Support'}
     </button>
   );
 }

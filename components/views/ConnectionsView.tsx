@@ -38,8 +38,8 @@ export default function ConnectionsView() {
     { id: 'supporting', label: 'Supporting', count: supporting.length },
   ];
 
-  const message = (u: UserProfile) => {
-    const threadId = store.openThreadWith(u.id);
+  const message = async (u: UserProfile) => {
+    const threadId = await store.openThreadWith(u.id);
     navigate('messages', threadId);
   };
 
@@ -84,11 +84,11 @@ export default function ConnectionsView() {
               ? 'No suggestions right now'
               : tab === 'supporters'
               ? 'No supporters yet'
-              : 'You aren’t following anyone yet'
+              : 'You aren’t supporting anyone yet'
           }
           description={
             tab === 'supporting'
-              ? 'Explore the community and follow people whose stories speak to you.'
+              ? 'Explore the community and support people whose stories speak to you.'
               : 'When people find your moments meaningful, they’ll show up here.'
           }
           action={
@@ -154,7 +154,7 @@ export default function ConnectionsView() {
                       small
                       onToggle={() => {
                         store.toggleFollow(u.id);
-                        store.toast(store.isFollowing(u.id) ? `Unfollowed ${u.name}` : `You're now supporting ${u.name} 💚`);
+                        store.toast(store.isFollowing(u.id) ? `Stopped supporting ${u.name}` : `You're now supporting ${u.name} 💚`);
                       }}
                     />
                   )}

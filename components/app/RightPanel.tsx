@@ -88,7 +88,7 @@ export default function RightPanel() {
                 following={isFollowing(u.id)}
                 onToggle={() => {
                   toggleFollow(u.id);
-                  toast(isFollowing(u.id) ? `Unfollowed ${u.name}` : `You're now supporting ${u.name} 💚`);
+                  toast(isFollowing(u.id) ? `Stopped supporting ${u.name}` : `You're now supporting ${u.name} 💚`);
                 }}
               />
             </div>

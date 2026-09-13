@@ -22,7 +22,7 @@ export default function JourneyView({ onCreate }: { onCreate: () => void }) {
     [posts]
   );
 
-  const likesReceived = mine.reduce((s, p) => s + p.likes, 0);
+  const supportsReceived = mine.reduce((s, p) => s + p.supports, 0);
   const photos = mine.filter((p) => p.image).length;
   const videos = mine.filter((p) => p.video).length;
   const moments = mine.filter((p) => !p.image && !p.video).length;
@@ -46,7 +46,7 @@ export default function JourneyView({ onCreate }: { onCreate: () => void }) {
     { label: '5 moments shared', done: mine.length >= 5, icon: 'spark' },
     { label: 'First photo posted', done: photos >= 1, icon: 'image' },
     { label: 'First video posted', done: videos >= 1, icon: 'video' },
-    { label: '50 likes received', done: likesReceived >= 50, icon: 'heart' },
+    { label: '50 supports received', done: supportsReceived >= 50, icon: 'support' },
     { label: '10 supporters', done: followers.length >= 10, icon: 'people' },
   ];
 
@@ -62,7 +62,7 @@ export default function JourneyView({ onCreate }: { onCreate: () => void }) {
 
   const stats = [
     { label: 'Moments', value: compactCount(mine.length), icon: 'pen' },
-    { label: 'Likes received', value: compactCount(likesReceived), icon: 'heart' },
+    { label: 'Supports received', value: compactCount(supportsReceived), icon: 'support' },
     { label: 'Supporters', value: compactCount(followers.length), icon: 'people' },
     { label: 'Supporting', value: compactCount(following.length), icon: 'user' },
     { label: 'Day streak', value: compactCount(streak), icon: 'trending' },

@@ -8,6 +8,7 @@ import { Avatar, Badge, FollowButton, Modal, ModalHeader, PrimaryButton, GhostBu
 import PostCard from '@/components/post/PostCard';
 import ImageCropModal from '@/components/profile/ImageCropModal';
 import { uploadMedia, blobToFile, fileToDataURL } from '@/lib/upload';
+import { useMediaUrl } from '@/components/ui/Media';
 import { fullDate, compactCount, initials } from '@/lib/format';
 import { ME_ID } from '@/lib/data/sample';
 import type { UserProfile } from '@/lib/types';
@@ -26,6 +27,7 @@ export default function ProfileView({ userId, onCreate }: { userId?: string; onC
   const [cropTarget, setCropTarget] = useState<'avatar' | 'cover' | null>(null);
   const [cropSrc, setCropSrc] = useState('');
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [, setProgress] = useState(0);
   const [lightbox, setLightbox] = useState<string | null>(null);
   const avatarInput = useRef<HTMLInputElement>(null);
   const coverInput = useRef<HTMLInputElement>(null);
@@ -61,9 +63,9 @@ export default function ProfileView({ userId, onCreate }: { userId?: string; onC
     setUploadingImage(true);
     try {
       const file = await blobToFile(blob, `${cropTarget}-${Date.now()}.jpg`);
-      const { url, storage } = await uploadMedia(file, 'image');
-      if (cropTarget === 'avatar') store.updateProfile({ avatar: url });
-      else store.updateProfile({ cover: url });
+      const { key, storage } = await uploadMedia(file, cropTarget === 'avatar' ? 'avatar' : 'cover', setProgress);
+      if (cropTarget === 'avatar') store.updateProfile({ avatar: key });
+      else store.updateProfile({ cover: key });
       store.toast(storage === 'r2' ? `${cropTarget === 'avatar' ? 'Profile photo' : 'Cover'} updated ✨` : 'Updated! (demo storage)', 'success');
     } catch {
       store.toast('Could not update image', 'error');
@@ -90,8 +92,9 @@ export default function ProfileView({ userId, onCreate }: { userId?: string; onC
     ...(isOwn ? [{ id: 'saved' as ProfileTab, label: 'Saved', count: savedPosts.length }] : []),
   ];
 
-  const coverStyle: React.CSSProperties = user.cover
-    ? { backgroundImage: `url(${user.cover})`, backgroundSize: 'cover', backgroundPosition: 'center' }
+  const resolvedCover = useMediaUrl(user.cover);
+  const coverStyle: React.CSSProperties = resolvedCover
+    ? { backgroundImage: `url(${resolvedCover})`, backgroundSize: 'cover', backgroundPosition: 'center' }
     : { background: `linear-gradient(120deg, hsl(${user.avatarHue}, 38%, 32%), hsl(${(user.avatarHue + 60) % 360}, 40%, 22%))` };
 
   return (
@@ -150,8 +153,7 @@ export default function ProfileView({ userId, onCreate }: { userId?: string; onC
                 <>
                   <button
                     onClick={() => {
-                      const threadId = store.openThreadWith(user.id);
-                      navigate('messages', threadId);
+                      void store.openThreadWith(user.id).then((threadId) => navigate('messages', threadId));
                     }}
                     className="px-4 py-2 rounded-xl border border-[var(--border)] text-sm font-semibold text-[var(--text)] hover:bg-[var(--card-2)] transition-colors"
                   >
@@ -161,7 +163,7 @@ export default function ProfileView({ userId, onCreate }: { userId?: string; onC
                     following={store.isFollowing(user.id)}
                     onToggle={() => {
                       store.toggleFollow(user.id);
-                      store.toast(store.isFollowing(user.id) ? `Unfollowed ${user.name}` : `You're now supporting ${user.name} 💚`);
+                      store.toast(store.isFollowing(user.id) ? `Stopped supporting ${user.name}` : `You're now supporting ${user.name} 💚`);
                     }}
                   />
                 </>
@@ -244,7 +246,7 @@ export default function ProfileView({ userId, onCreate }: { userId?: string; onC
           <EmptyState
             icon="pen"
             title={isOwn ? 'You haven’t shared anything yet' : `${user.name.split(' ')[0]} hasn’t shared anything yet`}
-            description={isOwn ? 'Your photos, videos and moments will appear here.' : 'Follow them to hear about it first when they do.'}
+            description={isOwn ? 'Your photos, videos and moments will appear here.' : 'Support them to hear about it first when they do.'}
             action={
               isOwn ? (
                 <PrimaryButton onClick={onCreate}><Icon name="plus" size={16} /> Create your first post</PrimaryButton>
@@ -482,7 +484,7 @@ function PeopleModal({ kind, onClose }: { kind: 'supporters' | 'supporting'; onC
       <div className="p-3 max-h-96 overflow-y-auto">
         {people.length === 0 && (
           <p className="text-sm text-[var(--muted)] text-center py-8">
-            {kind === 'supporters' ? 'No supporters yet — keep sharing!' : 'You aren’t following anyone yet.'}
+            {kind === 'supporters' ? 'No supporters yet — keep sharing!' : 'You aren’t supporting anyone yet.'}
           </p>
         )}
         {people.map((u) => (
@@ -500,7 +502,7 @@ function PeopleModal({ kind, onClose }: { kind: 'supporters' | 'supporting'; onC
               following={store.isFollowing(u.id)}
               onToggle={() => {
                 store.toggleFollow(u.id);
-                store.toast(store.isFollowing(u.id) ? `Unfollowed ${u.name}` : `Following ${u.name} 💚`);
+                store.toast(store.isFollowing(u.id) ? `Stopped supporting ${u.name}` : `You're now supporting ${u.name} 💚`);
               }}
             />
           </div>

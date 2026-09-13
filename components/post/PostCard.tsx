@@ -1,15 +1,17 @@
 'use client';
 
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { Post } from '@/lib/types';
 import { useStore } from '@/lib/store';
 import { useNav } from '@/components/app/nav';
 import { Icon } from '@/components/ui/Icons';
 import { Avatar, Badge, Modal, ModalHeader, GhostButton, PrimaryButton } from '@/components/ui/Primitives';
+import { R2Image, R2Video } from '@/components/ui/Media';
 import { timeAgo, compactCount } from '@/lib/format';
 import { ME_ID, TOPICS } from '@/lib/data/sample';
+import { getProblem } from '@/lib/recsys/problems';
 
-export default function PostCard({ post, highlight = false }: { post: Post; highlight?: boolean }) {
+export default function PostCard({ post, highlight = false, reason }: { post: Post; highlight?: boolean; reason?: string }) {
   const store = useStore();
   const { navigate } = useNav();
   const author = store.getUser(post.userId);
@@ -23,11 +25,66 @@ export default function PostCard({ post, highlight = false }: { post: Post; high
   const [reportOpen, setReportOpen] = useState(false);
   const [lightbox, setLightbox] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  const [likeAnim, setLikeAnim] = useState(false);
+  const [supportAnim, setSupportAnim] = useState(false);
   const [shareViaMessage, setShareViaMessage] = useState(false);
 
   const longText = post.text.length > 280;
   const displayText = longText && !expanded ? `${post.text.slice(0, 280).trimEnd()}…` : post.text;
+
+  /* ---------- recommendation signals: view + watch tracking ---------- */
+  const cardRef = useRef<HTMLElement | null>(null);
+  const viewTrackedRef = useRef(false);
+  const watchTrackedRef = useRef(false);
+  const watchedSecondsRef = useRef(0);
+  const playSessionRef = useRef(false);
+
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el || viewTrackedRef.current) return;
+    let visibleSince = 0;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting && entry.intersectionRatio >= 0.5) {
+            visibleSince = Date.now();
+          } else if (visibleSince) {
+            const dwell = Date.now() - visibleSince;
+            visibleSince = 0;
+            if (dwell >= 900 && !viewTrackedRef.current) {
+              viewTrackedRef.current = true;
+              store.trackActivity('view', { post });
+            } else if (dwell < 900 && !viewTrackedRef.current) {
+              // scrolled straight past — a soft negative signal
+              store.trackActivity('ignore', { post, meta: { skipped: true } });
+              viewTrackedRef.current = true;
+            }
+          }
+        }
+      },
+      { threshold: [0.5] }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [post.id]);
+
+  const onVideoTime = (t: number) => {
+    if (playSessionRef.current) watchedSecondsRef.current = t;
+  };
+  const onVideoPlay = () => {
+    playSessionRef.current = true;
+  };
+  const onVideoStop = () => {
+    playSessionRef.current = false;
+    maybeTrackWatch();
+  };
+  const maybeTrackWatch = () => {
+    if (watchTrackedRef.current) return;
+    if (watchedSecondsRef.current >= 3) {
+      watchTrackedRef.current = true;
+      store.trackActivity('watch', { post, meta: { seconds: Math.round(watchedSecondsRef.current) } });
+    }
+  };
 
   const copyLink = async () => {
     const url = `${window.location.origin}/feed#post-${post.id}`;
@@ -41,16 +98,20 @@ export default function PostCard({ post, highlight = false }: { post: Post; high
     setShareOpen(false);
   };
 
-  const onLike = () => {
-    store.toggleLike(post.id);
-    if (!post.likedByMe) {
-      setLikeAnim(true);
-      window.setTimeout(() => setLikeAnim(false), 400);
+  const onSupport = () => {
+    if (!post.supportedByMe) {
+      setSupportAnim(true);
+      window.setTimeout(() => setSupportAnim(false), 400);
     }
+    store.toggleSupport(post.id);
+    if (!post.supportedByMe) store.toast('You supported this moment 💚', 'info');
   };
+
+  const dominantProblem = post.problems?.[0]?.id;
 
   return (
     <article
+      ref={cardRef}
       id={`post-${post.id}`}
       className={`bg-[var(--card)] border rounded-2xl overflow-hidden transition-colors fade-in ${
         highlight ? 'border-[var(--brand)] ring-2 ring-[var(--brand)]/30' : 'border-[var(--border)]'
@@ -87,7 +148,7 @@ export default function PostCard({ post, highlight = false }: { post: Post; high
           {menuOpen && (
             <>
               <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
-              <div className="pop-in absolute right-0 top-full mt-1 bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-xl py-1.5 w-52 z-20">
+              <div className="pop-in absolute right-0 top-full mt-1 bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-xl py-1.5 w-56 z-20">
                 <MenuBtn icon="link" label="Copy link" onClick={copyLink} />
                 {isOwn ? (
                   <>
@@ -97,12 +158,29 @@ export default function PostCard({ post, highlight = false }: { post: Post; high
                 ) : (
                   <>
                     <MenuBtn
-                      icon={store.isFollowing(author.id) ? 'close' : 'user'}
-                      label={store.isFollowing(author.id) ? `Unfollow @${author.username}` : `Follow @${author.username}`}
+                      icon={store.isFollowing(author.id) ? 'close' : 'support'}
+                      label={store.isFollowing(author.id) ? `Stop supporting @${author.username}` : `Support @${author.username}`}
                       onClick={() => {
                         store.toggleFollow(author.id);
-                        store.toast(store.isFollowing(author.id) ? `Unfollowed ${author.name}` : `Following ${author.name} 💚`);
+                        store.toast(store.isFollowing(author.id) ? `Stopped supporting ${author.name}` : `You now support ${author.name} 💚`);
                         setMenuOpen(false);
+                      }}
+                    />
+                    <MenuBtn
+                      icon="eyeOff"
+                      label="Not interested"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        store.hidePost(post.id, { problemId: dominantProblem, notInterested: true });
+                        store.toast("Got it — we'll show you less like this", 'info');
+                      }}
+                    />
+                    <MenuBtn
+                      icon="close"
+                      label="Hide this post"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        store.hidePost(post.id);
                       }}
                     />
                     <MenuBtn icon="flag" label="Report post" onClick={() => { setMenuOpen(false); setReportOpen(true); }} />
@@ -127,6 +205,26 @@ export default function PostCard({ post, highlight = false }: { post: Post; high
             {expanded ? 'Show less' : 'Read more'}
           </button>
         )}
+        {post.problems && post.problems.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 mt-3">
+            {post.problems.slice(0, 3).map((p) => {
+              const cat = getProblem(p.id);
+              if (!cat) return null;
+              return (
+                <span
+                  key={p.id}
+                  title="Understood by Ruhiz — people who care about this will see it sooner"
+                  className="inline-flex items-center gap-1 px-2 py-0.5 bg-[var(--card-2)] text-[var(--muted)] text-[11px] font-medium rounded-full"
+                >
+                  <span aria-hidden>{cat.emoji}</span> {cat.label}
+                </span>
+              );
+            })}
+            {reason && (
+              <span className="text-[11px] text-[var(--muted)] italic ml-1 hidden sm:inline">· {reason}</span>
+            )}
+          </div>
+        )}
         {post.topics.length > 0 && (
           <div className="flex flex-wrap gap-2 mt-3">
             {post.topics.map((t) => (
@@ -141,26 +239,41 @@ export default function PostCard({ post, highlight = false }: { post: Post; high
       {/* Media */}
       {post.image && (
         <button onClick={() => setLightbox(true)} className="block w-full cursor-zoom-in group relative" aria-label="Open image">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={post.image} alt="" className="w-full max-h-[520px] object-cover" loading="lazy" />
+          <R2Image mediaKey={post.image} alt="" className="w-full max-h-[520px] object-cover" />
         </button>
       )}
-      {post.video && <VideoBlock src={post.video} />}
+      {post.video && (
+        <div className="px-4 sm:px-5 pb-4">
+          <R2Video
+            mediaKey={post.video}
+            className="w-full rounded-xl bg-black max-h-[520px]"
+            onPlay={onVideoPlay}
+            onPause={onVideoStop}
+            onEnded={() => {
+              playSessionRef.current = false;
+              watchTrackedRef.current = false;
+              watchedSecondsRef.current = 999;
+              maybeTrackWatch();
+            }}
+            onTimeUpdate={onVideoTime}
+          />
+        </div>
+      )}
 
-      {/* Actions */}
+      {/* Actions — Support-first, no likes/hearts */}
       <div className="px-4 sm:px-5 py-3.5 border-t border-[var(--border)]">
         <div className="flex items-center gap-1 sm:gap-2">
           <ActionBtn
-            icon="heart"
-            filled={post.likedByMe}
-            active={post.likedByMe}
-            label={compactCount(post.likes)}
-            onClick={onLike}
-            className={likeAnim ? 'like-pop' : ''}
-            title="Like"
+            icon="support"
+            filled={post.supportedByMe}
+            active={post.supportedByMe}
+            label={compactCount(post.supports)}
+            onClick={onSupport}
+            className={supportAnim ? 'like-pop' : ''}
+            title="Support — let them know you care"
           />
           <ActionBtn
-            icon="support"
+            icon="footprints"
             filled={post.beenThere}
             active={post.beenThere}
             label={compactCount(post.beenThereCount)}
@@ -168,9 +281,14 @@ export default function PostCard({ post, highlight = false }: { post: Post; high
               store.toggleBeenThere(post.id);
               if (!post.beenThere) store.toast('You told them you’ve been there 🫂', 'info');
             }}
-            title="Been there — show support"
+            title="Been there — walk in their shoes"
           />
-          <ActionBtn icon="comment" label={compactCount(post.comments.length)} onClick={() => setCommentsOpen((v) => !v)} title="Comments" />
+          <ActionBtn
+            icon="comment"
+            label={compactCount(post.commentCount || post.comments.length)}
+            onClick={() => setCommentsOpen((v) => !v)}
+            title="Comments"
+          />
 
           {/* Share */}
           <div className="relative">
@@ -227,8 +345,7 @@ export default function PostCard({ post, highlight = false }: { post: Post; high
           <button className="absolute top-4 right-4 p-2 text-white/80 hover:text-white" aria-label="Close image">
             <Icon name="close" size={26} />
           </button>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={post.image} alt="" className="max-w-full max-h-[90vh] rounded-lg object-contain pop-in" onClick={(e) => e.stopPropagation()} />
+          <R2Image mediaKey={post.image} alt="" className="max-w-full max-h-[90vh] rounded-lg object-contain pop-in" />
         </div>
       )}
 
@@ -240,7 +357,7 @@ export default function PostCard({ post, highlight = false }: { post: Post; high
           confirmLabel="Delete"
           danger
           onConfirm={() => {
-            store.deletePost(post.id);
+            void store.deletePost(post.id);
             store.toast('Moment deleted');
           }}
           onClose={() => setDeleteOpen(false)}
@@ -260,7 +377,6 @@ export default function PostCard({ post, highlight = false }: { post: Post; high
   );
 }
 
-/* Hook-backed state must be declared before use — re-declare via wrapper */
 function ActionBtn({
   icon,
   label,
@@ -303,25 +419,6 @@ function MenuBtn({ icon, label, onClick, danger = false }: { icon: string; label
       <Icon name={icon} size={16} className={danger ? '' : 'text-[var(--muted)]'} />
       {label}
     </button>
-  );
-}
-
-function VideoBlock({ src }: { src: string }) {
-  const [failed, setFailed] = useState(false);
-  if (failed) {
-    return (
-      <div className="mx-4 sm:mx-5 mb-4 rounded-xl bg-[var(--card-2)] border border-[var(--border)] p-6 text-center">
-        <Icon name="video" size={28} className="text-[var(--muted)] mx-auto mb-2" />
-        <p className="text-sm text-[var(--muted)]">This video was shared in a demo session and is no longer available.<br />Connect Supabase + R2 to keep uploads permanent.</p>
-      </div>
-    );
-  }
-  return (
-    <div className="px-4 sm:px-5 pb-4">
-      <video controls preload="metadata" playsInline className="w-full rounded-xl bg-black max-h-[520px]" onError={() => setFailed(true)}>
-        <source src={src} />
-      </video>
-    </div>
   );
 }
 
@@ -464,7 +561,7 @@ function EditPostModal({ post, onClose }: { post: Post; onClose: () => void }) {
           <PrimaryButton
             disabled={!text.trim()}
             onClick={() => {
-              store.updatePost(post.id, { text: text.trim(), topics });
+              void store.updatePost(post.id, { text: text.trim(), topics });
               store.toast('Moment updated');
               onClose();
             }}
@@ -486,7 +583,7 @@ function MessageShareModal({ open, postId, onClose }: { open: boolean; postId: s
 
   return (
     <Modal open={open} onClose={onClose} maxWidth="max-w-md">
-      <ModalHeader title="Send via message" subtitle="Share this moment with a connection" onClose={onClose} />
+      <ModalHeader title="Send via message" subtitle="Share this moment with someone you support" onClose={onClose} />
       <div className="p-3 max-h-80 overflow-y-auto">
         {threads.map((t) => {
           const u = store.getUser(t.userId);
