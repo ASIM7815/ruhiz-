@@ -10,6 +10,17 @@ A safe and supportive community website built with Next.js, designed pixel-perfe
 - **Pixel-Perfect**: Matches the reference design specifications exactly
 - **Performance Optimized**: Next.js Image optimization and code splitting
 
+## Production
+
+Ruhiz now ships a deterministic recommendation engine, Supabase Realtime chat,
+and production media uploads (private Cloudflare R2 + presigned URLs), with
+**Support** as the community reaction model.
+
+- **SQL migration (run once, idempotent, nothing else required):**
+  `supabase/migrations/20260913000000_ruhiz_production.sql`
+- **Setup guide, algorithm details and R2 CORS config:** see `PRODUCTION_READY.md`
+- **Environment variables:** see `.env.example`
+
 ## Getting Started
 
 ### Prerequisites

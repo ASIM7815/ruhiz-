@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import ImageCropModal from '@/components/profile/ImageCropModal';
+import { uploadMedia } from '@/lib/upload';
 
 export default function ProfilePage() {
   const [user, setUser] = useState<any>(null);
@@ -18,6 +19,7 @@ export default function ProfilePage() {
   const [imageToCrop, setImageToCrop] = useState('');
   const [cropType, setCropType] = useState<'profile' | 'cover'>('profile');
   const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(0);
   
   const profilePhotoInputRef = useRef<HTMLInputElement>(null);
   const coverPhotoInputRef = useRef<HTMLInputElement>(null);
@@ -98,27 +100,18 @@ export default function ProfilePage() {
         type: 'image/jpeg',
       });
 
-      // Upload to R2
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('type', 'photo');
+      // Upload via the presigned R2 pipeline (progress + retry, secrets stay server-side)
+      const { key: objectKey } = await uploadMedia(
+        file,
+        cropType === 'profile' ? 'avatar' : 'cover',
+        (pct) => setProgress(pct)
+      );
 
-      const uploadResponse = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!uploadResponse.ok) {
-        throw new Error('Upload failed');
-      }
-
-      const { url: imageUrl } = await uploadResponse.json();
-
-      // Update profile in database
+      // Update profile in database (stores the R2 object key)
       const updateField = cropType === 'profile' ? 'avatar_url' : 'cover_url';
       const { error } = await supabase
         .from('profiles')
-        .update({ [updateField]: imageUrl })
+        .update({ [updateField]: objectKey })
         .eq('user_id', user.id);
 
       if (error) throw error;

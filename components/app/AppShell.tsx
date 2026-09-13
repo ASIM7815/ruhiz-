@@ -120,6 +120,16 @@ function ShellInner() {
             showRightPanel ? 'xl:mr-[330px]' : ''
           }`}
         >
+          {store.dataMode === 'supabase-pending-migration' && route.view === 'home' && (
+            <div className="max-w-[640px] mx-auto mb-4 px-4 py-3 rounded-2xl border border-amber-300/60 bg-amber-50 text-amber-900 text-sm flex items-start gap-3">
+              <span className="text-lg leading-none mt-0.5">⚠️</span>
+              <p className="leading-relaxed">
+                You're signed in, but the production database isn't set up yet. Run{' '}
+                <code className="px-1.5 py-0.5 rounded bg-amber-100 font-mono text-xs">supabase/migrations/20260913000000_ruhiz_production.sql</code>{' '}
+                in the Supabase SQL Editor to unlock your live feed, chat and uploads. Everything works with demo content meanwhile.
+              </p>
+            </div>
+          )}
           <div className="px-3 sm:px-6 py-5 pb-24 md:pb-8" key={`${route.view}-${route.param ?? ''}`}>
             {route.view === 'home' && <HomeView onCreate={openCreate} focusPostId={route.param?.startsWith('post-') ? route.param.slice(5) : undefined} />}
             {route.view === 'explore' && <ExploreView initialQuery={route.param ?? ''} />}

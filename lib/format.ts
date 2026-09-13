@@ -66,3 +66,18 @@ export function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+/** Read a File/Blob as a data URL (used for previews and demo fallbacks). */
+export function fileToDataURL(file: File | Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+/** Convenience: wrap a Blob into a File (used by the crop flow). */
+export function blobToFile(blob: Blob, name: string): File {
+  return new File([blob], name, { type: blob.type || 'image/jpeg' });
+}

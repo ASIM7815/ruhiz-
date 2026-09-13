@@ -291,9 +291,9 @@ function NotificationsSection() {
   const { settings } = store;
 
   const toggles: { key: keyof typeof settings; label: string; hint: string }[] = [
-    { key: 'notifLikes', label: 'Likes', hint: 'When someone likes your moment' },
+    { key: 'notifLikes', label: 'Supports', hint: 'When someone supports your moment' },
     { key: 'notifComments', label: 'Comments', hint: 'When someone replies to you' },
-    { key: 'notifFollows', label: 'New supporters', hint: 'When someone starts following you' },
+    { key: 'notifFollows', label: 'New supporters', hint: 'When someone starts supporting you' },
     { key: 'notifMessages', label: 'Messages', hint: 'New direct messages' },
     { key: 'notifMentions', label: 'Mentions', hint: 'When someone mentions you' },
   ];

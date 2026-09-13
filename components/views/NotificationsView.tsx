@@ -9,10 +9,10 @@ import { timeAgo } from '@/lib/format';
 import type { AppNotification, NotificationKind } from '@/lib/types';
 
 const KIND_META: Record<NotificationKind, { icon: string; color: string; label: string }> = {
-  like: { icon: 'heart', color: 'bg-rose-500/15 text-rose-500', label: 'Likes' },
   support: { icon: 'support', color: 'bg-emerald-500/15 text-emerald-600', label: 'Support' },
   comment: { icon: 'comment', color: 'bg-sky-500/15 text-sky-600', label: 'Comments' },
-  follow: { icon: 'user', color: 'bg-violet-500/15 text-violet-600', label: 'Follows' },
+  person_support: { icon: 'people', color: 'bg-violet-500/15 text-violet-600', label: 'New supporters' },
+  message: { icon: 'chat', color: 'bg-sky-500/15 text-sky-500', label: 'Messages' },
   mention: { icon: 'spark', color: 'bg-amber-500/15 text-amber-600', label: 'Mentions' },
 };
 
@@ -30,7 +30,7 @@ export default function NotificationsView() {
 
   const open = (n: AppNotification) => {
     store.markNotificationRead(n.id);
-    if (n.kind === 'follow') {
+    if (n.kind === 'person_support') {
       navigate('profile', n.actorId);
     } else if (n.postId) {
       navigate('home', `post-${n.postId}`);
@@ -121,16 +121,18 @@ export default function NotificationsView() {
 
 function textFor(n: AppNotification): string {
   switch (n.kind) {
-    case 'like':
-      return 'liked your moment 💚';
+    case 'support':
+      return 'supported your moment 💚';
+    case 'message':
+      return `sent a message: “${n.text ?? ''}”`;
     case 'comment':
       return `commented: “${n.text ?? ''}”`;
-    case 'follow':
+    case 'person_support':
       return 'started supporting you 🎉';
     case 'mention':
       return 'mentioned you in a moment';
-    case 'support':
-      return 'said they’ve been there too 🫂';
+    default:
+      return 'sent you a message';
   }
 }
 

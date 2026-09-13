@@ -10,7 +10,7 @@ import { clockTime, timeAgo } from '@/lib/format';
 export default function MessagesView({ initialThread }: { initialThread?: string }) {
   const store = useStore();
   const { navigate } = useNav();
-  const { threads, typing } = store;
+  const { threads, typing, onlineIds } = store;
   const [activeId, setActiveId] = useState<string | null>(initialThread ?? null);
   const [query, setQuery] = useState('');
   const [draft, setDraft] = useState('');
@@ -20,8 +20,8 @@ export default function MessagesView({ initialThread }: { initialThread?: string
   const sorted = useMemo(
     () =>
       [...threads].sort((a, b) => {
-        const la = a.messages.at(-1)?.at ?? '0';
-        const lb = b.messages.at(-1)?.at ?? '0';
+        const la = a.lastMessageAt ?? a.messages.at(-1)?.at ?? '0';
+        const lb = b.lastMessageAt ?? b.messages.at(-1)?.at ?? '0';
         return lb.localeCompare(la);
       }),
     [threads]
@@ -41,6 +41,13 @@ export default function MessagesView({ initialThread }: { initialThread?: string
     }
   }, [initialThread]);
 
+  // realtime: join/leave the conversation's typing+presence channel
+  useEffect(() => {
+    store.setActiveThread(activeId);
+    return () => store.setActiveThread(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId]);
+
   useEffect(() => {
     if (activeId) store.markThreadRead(activeId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -58,11 +65,12 @@ export default function MessagesView({ initialThread }: { initialThread?: string
   const send = () => {
     const text = draft.trim();
     if (!text || !activeId) return;
-    store.sendMessage(activeId, text);
+    void store.sendMessage(activeId, text);
     setDraft('');
   };
 
   const isTyping = active ? typing[active.id] : false;
+  const otherOnline = active ? onlineIds.includes(active.userId) || active.online : false;
 
   return (
     <div className="max-w-[900px] mx-auto">
@@ -88,6 +96,7 @@ export default function MessagesView({ initialThread }: { initialThread?: string
             {filteredThreads.map((t) => {
               const u = store.getUser(t.userId);
               const last = t.messages.at(-1);
+              const online = onlineIds.includes(t.userId) || t.online;
               return (
                 <button
                   key={t.id}
@@ -98,7 +107,7 @@ export default function MessagesView({ initialThread }: { initialThread?: string
                 >
                   <div className="relative flex-shrink-0">
                     <Avatar user={u} size={46} />
-                    {t.online && <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-green-500 ring-2 ring-[var(--card)]" />}
+                    {online && <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-green-500 ring-2 ring-[var(--card)]" />}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2">
@@ -137,7 +146,13 @@ export default function MessagesView({ initialThread }: { initialThread?: string
                 <div className="flex-1 min-w-0">
                   <p className="font-semibold text-sm text-[var(--text)] truncate">{activeUser.name}</p>
                   <p className="text-xs text-[var(--muted)]">
-                    {isTyping ? 'typing…' : active.online ? 'Active now' : `Active ${timeAgo(active.messages.at(-1)?.at ?? new Date().toISOString())} ago`}
+                    {isTyping
+                      ? 'typing…'
+                      : activeUser.persona
+                      ? 'Community member · replies with care 💚'
+                      : otherOnline
+                      ? 'Active now'
+                      : 'Offline'}
                   </p>
                 </div>
                 <button onClick={() => navigate('profile', activeUser.id)} className="p-2 rounded-full hover:bg-[var(--card-2)] text-[var(--muted)]" aria-label="View profile">
@@ -154,20 +169,37 @@ export default function MessagesView({ initialThread }: { initialThread?: string
                     <p className="text-xs text-[var(--muted)] mt-1">This is the beginning of your conversation. Be kind 💚</p>
                   </div>
                 )}
-                {active.messages.map((m) => (
+                {active.messages.map((m, i) => {
+                  const isLastMine = m.fromMe && !active.messages.slice(i + 1).some((x) => x.fromMe);
+                  const read =
+                    store.settings.showReadReceipts &&
+                    isLastMine &&
+                    !!active.otherLastReadAt &&
+                    active.otherLastReadAt >= m.at;
+                  return (
                   <div key={m.id} className={`flex ${m.fromMe ? 'justify-end' : 'justify-start'} fade-in`}>
                     <div
                       className={`max-w-[75%] px-4 py-2.5 rounded-3xl text-sm leading-relaxed whitespace-pre-wrap break-words ${
                         m.fromMe
                           ? 'bg-[var(--brand)] text-white rounded-br-lg'
                           : 'bg-[var(--card-2)] text-[var(--text)] rounded-bl-lg'
-                      }`}
+                      } ${m.pending ? 'opacity-70' : ''}`}
                     >
                       {m.text}
-                      <div className={`text-[10px] mt-1 ${m.fromMe ? 'text-white/70 text-right' : 'text-[var(--muted)]'}`}>{clockTime(m.at)}</div>
+                      <div className={`text-[10px] mt-1 flex items-center gap-1 justify-end ${m.fromMe ? 'text-white/70' : 'text-[var(--muted)]'}`}>
+                        {clockTime(m.at)}
+                        {m.fromMe && !m.pending && (
+                          <span title={read ? 'Read' : 'Sent'}>
+                            <Icon name="check" size={11} className={read ? 'text-white' : 'text-white/50'} />
+                            {read ? ' Read' : ' Sent'}
+                          </span>
+                        )}
+                        {m.pending && <span> Sending…</span>}
+                      </div>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
                 {isTyping && (
                   <div className="flex justify-start">
                     <div className="bg-[var(--card-2)] rounded-3xl rounded-bl-lg px-4 py-3 flex gap-1.5 items-center">
@@ -185,7 +217,10 @@ export default function MessagesView({ initialThread }: { initialThread?: string
                 <div className="flex items-center gap-2">
                   <input
                     value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
+                    onChange={(e) => {
+                      setDraft(e.target.value);
+                      store.sendTyping(active.id);
+                    }}
                     onKeyDown={(e) => e.key === 'Enter' && send()}
                     placeholder={`Message ${activeUser.name.split(' ')[0]}…`}
                     className="flex-1 px-4 py-2.5 bg-[var(--card-2)] rounded-full text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--brand)]/40 placeholder:text-[var(--muted)]"

@@ -8,12 +8,15 @@ import { Avatar, EmptyState, FeedSkeleton, PrimaryButton } from '@/components/ui
 import PostCard from '@/components/post/PostCard';
 import type { Post } from '@/lib/types';
 import { ME_ID, TOPICS } from '@/lib/data/sample';
+import { PROBLEMS } from '@/lib/recsys/problems';
+
+const PROBLEM_CHIPS = PROBLEMS.slice(0, 8);
 
 type HomeTab = 'for-you' | 'following' | 'photo' | 'video' | 'moment';
 
 const TABS: { id: HomeTab; label: string; icon?: string }[] = [
   { id: 'for-you', label: 'For You' },
-  { id: 'following', label: 'Following' },
+  { id: 'following', label: 'Supporting' },
   { id: 'photo', label: 'Photo', icon: 'image' },
   { id: 'video', label: 'Video', icon: 'video' },
   { id: 'moment', label: 'Moment', icon: 'pen' },
@@ -26,19 +29,22 @@ export default function HomeView({
   onCreate: (tab?: 'photo' | 'video' | 'moment') => void;
   focusPostId?: string;
 }) {
-  const { posts, following, getUser } = useStore();
+  const store = useStore();
+  const { posts, following, getUser, rankedFeed, feedReasons } = store;
   const { navigate } = useNav();
-  const me = useStore().me;
+  const me = store.me;
   const [tab, setTab] = useState<HomeTab>('for-you');
   const [topic, setTopic] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Simulated fetch so loading states are visible (data is local-first)
+  // loading state until the store has hydrated (sample data or Supabase)
   useEffect(() => {
-    const t = window.setTimeout(() => setLoading(false), 700);
-    return () => window.clearTimeout(t);
-  }, []);
+    if (store.hydrated) {
+      const t = window.setTimeout(() => setLoading(false), 350);
+      return () => window.clearTimeout(t);
+    }
+  }, [store.hydrated]);
 
   const switchTab = (next: HomeTab) => {
     if (next === tab) return;
@@ -48,12 +54,18 @@ export default function HomeView({
     window.setTimeout(() => setLoading(false), 350);
   };
 
-  const refresh = () => {
+  const refresh = async () => {
     setRefreshing(true);
-    window.setTimeout(() => {
+    if (store.dataMode === 'supabase') {
+      await store.refreshPosts();
       setRefreshing(false);
-      useStoreScrollTop();
-    }, 800);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      window.setTimeout(() => {
+        setRefreshing(false);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }, 800);
+    }
   };
 
   const filtered = useMemo(() => {
@@ -72,11 +84,16 @@ export default function HomeView({
         list = posts.filter((p) => !p.image && !p.video);
         break;
       default:
-        list = [...posts];
+        // "For You" — Ruhiz's deterministic recommendation engine:
+        // interest + interaction history + recency + content preferences
+        // + controlled exploration (more discovery for new members).
+        list = rankedFeed.map((r) => r.post);
     }
-    if (topic) list = list.filter((p) => p.topics.includes(topic));
-    return [...list].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
-  }, [posts, following, tab, topic]);
+    if (topic) list = list.filter((p) => p.topics.includes(topic) || p.problems.some((pr) => pr.id === topic));
+    return [...list].sort((a, b) =>
+      tab === 'for-you' ? 0 : +new Date(b.createdAt) - +new Date(a.createdAt)
+    );
+  }, [posts, following, tab, topic, rankedFeed]);
 
   return (
     <div className="max-w-[640px] mx-auto">
@@ -142,7 +159,7 @@ export default function HomeView({
             </button>
           ))}
           <button
-            onClick={refresh}
+            onClick={() => void refresh()}
             className="ml-auto flex-shrink-0 p-2 rounded-full bg-[var(--card)] border border-[var(--border)] text-[var(--muted)] hover:text-[var(--brand)] transition-colors"
             aria-label="Refresh feed"
             title="Refresh feed"
@@ -162,15 +179,16 @@ export default function HomeView({
             >
               All topics
             </button>
-            {TOPICS.slice(0, 7).map((t) => (
+            {PROBLEM_CHIPS.map((p) => (
               <button
-                key={t}
-                onClick={() => setTopic(topic === t ? null : t)}
+                key={p.id}
+                onClick={() => setTopic(topic === p.id ? null : p.id)}
                 className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
-                  topic === t ? 'bg-[var(--text)] text-[var(--bg)]' : 'bg-[var(--card)] border border-[var(--border)] text-[var(--muted)] hover:border-[var(--brand)]'
+                  topic === p.id ? 'bg-[var(--text)] text-[var(--bg)]' : 'bg-[var(--card)] border border-[var(--border)] text-[var(--muted)] hover:border-[var(--brand)]'
                 }`}
               >
-                {t}
+                <span aria-hidden className="mr-1">{p.emoji}</span>
+                {p.label}
               </button>
             ))}
           </div>
@@ -186,7 +204,7 @@ export default function HomeView({
         ) : (
           <div className="space-y-5">
             {filtered.map((p) => (
-              <PostCard key={p.id} post={p} highlight={p.id === focusPostId} />
+              <PostCard key={p.id} post={p} highlight={p.id === focusPostId} reason={tab === 'for-you' ? feedReasons[p.id] : undefined} />
             ))}
             <div className="text-center py-6">
               <p className="text-sm text-[var(--muted)]">You’re all caught up 🌿 Check back soon for new moments.</p>

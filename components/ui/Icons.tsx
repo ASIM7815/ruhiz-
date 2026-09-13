@@ -32,9 +32,6 @@ const PATHS: Record<string, React.ReactNode> = {
     </>
   ),
   plus: <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />,
-  heart: (
-    <path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
-  ),
   comment: (
     <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
   ),
@@ -105,8 +102,24 @@ const PATHS: Record<string, React.ReactNode> = {
     <path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
   ),
   trending: <path strokeLinecap="round" strokeLinejoin="round" d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z" />,
+  // "Support" — a hand holding a heart. Ruhiz uses this everywhere instead
+  // of a plain heart/like icon. (Shaped after lucide's hand-heart, ISC.)
   support: (
-    <path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+    <>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M11 14h2a2 2 0 100-4h-3c-.6 0-1.1.2-1.4.6L3 16" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="m7 20 1.6-1.4c.3-.4.8-.6 1.4-.6h4c1.1 0 2.1-.4 2.8-1.2l4.6-4.4a2 2 0 00-2.75-2.91l-4.2 3.9" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="m2 15 6 6" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.5c1.4-1.4 1.4-3.6 0-5a3.36 3.36 0 00-5 0L12 5.9 9.5 3.5c-1.4-1.4-3.6-1.4-5 0-1.4 1.4-1.4 3.6 0 5L12 13l7.5-4.5Z" />
+    </>
+  ),
+  // "Been there" — footprints: I've walked in your shoes.
+  footprints: (
+    <>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v-2.38C4 11.5 2.97 10.5 3 8c.03-2.72 1.49-6 4.5-6C9.37 2 10 3.8 10 5.5c0 3.11-2 5.66-2 8.68V16a2 2 0 11-4 0Z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M20 20v-2.38c0-2.12 1.03-3.12 1-5.62-.03-2.72-1.49-6-4.5-6C14.63 6 14 7.8 14 9.5c0 3.11 2 5.66 2 8.68V20a2 2 0 10 4 0Z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M16 17h4" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M4 13h4" />
+    </>
   ),
   grid: (
     <path strokeLinecap="round" strokeLinejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
@@ -123,6 +136,9 @@ const PATHS: Record<string, React.ReactNode> = {
     <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
   ),
 };
+
+// Hearts are retired at Ruhiz — anything still asking for "heart" gets the support icon.
+PATHS.heart = PATHS.support;
 
 export interface IconProps extends React.SVGProps<SVGSVGElement> {
   name: keyof typeof PATHS | string;
