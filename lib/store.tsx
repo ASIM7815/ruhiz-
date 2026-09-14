@@ -814,24 +814,50 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       if (modeRef.current === 'supabase') {
         const sb = safeClient();
         const profileId = profileIdRef.current;
+        console.log('[POST INSERT] Starting insert:', { 
+          profileId, 
+          hasClient: !!sb, 
+          type: input.type,
+          textLength: input.text.length,
+          hasImage: !!input.image,
+          hasVideo: !!input.video,
+          topics: input.topics
+        });
+        
         if (!sb || !profileId) {
+          console.error('[POST INSERT] Missing requirements:', { hasClient: !!sb, profileId });
           setPosts((prev) => prev.filter((p) => p.id !== optimistic.id));
           toast('Your Ruhiz session is missing a live profile. Please log in again.', 'error');
           throw new Error('Missing live Ruhiz profile');
         }
         if (sb && profileId) {
+          const insertPayload = {
+            user_id: profileId,
+            type: input.type,
+            content: input.text,
+            image_url: input.image ?? null,
+            video_url: input.video ?? null,
+            topics: input.topics,
+          };
+          console.log('[POST INSERT] Insert payload:', insertPayload);
+          
           const { data, error } = await sb
             .from('posts')
-            .insert({
-              user_id: profileId,
-              type: input.type,
-              content: input.text,
-              image_url: input.image ?? null,
-              video_url: input.video ?? null,
-              topics: input.topics,
-            })
+            .insert(insertPayload)
             .select('*')
             .single();
+          
+          console.log('[POST INSERT] Result:', { 
+            success: !error, 
+            data, 
+            error: error ? { 
+              message: error.message, 
+              code: error.code, 
+              details: error.details,
+              hint: error.hint 
+            } : null 
+          });
+          
           if (!error && data) {
             const { data: probs } = await sb
               .from('post_problems')
