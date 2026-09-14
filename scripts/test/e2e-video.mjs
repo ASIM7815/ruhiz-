@@ -230,11 +230,19 @@ try {
   ok(/posts\//.test(key) && key.startsWith(`posts/${USER.id}/`), `key is user-scoped: ${key}`);
   ok(/\.mp4$/.test(key), 'key extension matches the video MIME type');
 
+  const putUrl_ = () => presign.uploadUrl;
   const putUrl = new URL(presign.uploadUrl);
   const putParams = [...putUrl.searchParams.keys()];
   ok(!putParams.some((p) => /x-amz-checksum|x-amz-sdk-checksum/i.test(p)),
     'presigned PUT carries no R2-incompatible checksum params', putParams.join(', '));
   ok(putUrl.origin === S3_ENDPOINT, 'presigned PUT targets the configured storage endpoint');
+
+  // The signature must really be scoped to this media type, not just this key.
+  const signedHeaders = (putUrl.searchParams.get('X-Amz-SignedHeaders') || '').split(';');
+  ok(signedHeaders.includes('content-type'),
+    `Content-Type is part of the signature (${signedHeaders.join(';')})`);
+  ok(presign.contentType === file.type,
+    `presign echoes the exact signed Content-Type ("${presign.contentType}") so the client cannot drift`);
 
   head('PART B · 2/5  PUT the video straight to storage (what the browser XHR does)');
   const putRes = await fetch(presign.uploadUrl, {
@@ -343,6 +351,17 @@ try {
     ok(r.status === 400, 'path traversal is rejected', `got ${r.status}`);
     const r2 = await fetch(`${APP}/api/media?key=${encodeURIComponent('posts/someone-else/2026-09/x.mp4')}`, authed);
     ok(r2.status === 200 || r2.status === 400, 'foreign-shaped key handled without leaking internals', `got ${r2.status}`);
+    // Same presigned URL, wrong Content-Type → signature must not validate.
+    const wrongType = await fetch(putUrl_(), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/x-msdownload' },
+      body: video,
+    });
+    ok(wrongType.status === 403,
+      'PUT with a different Content-Type than the signed one is refused (403)',
+      `got ${wrongType.status}`);
+    await wrongType.body?.cancel();
+
     const r3 = await fetch(`${APP}/api/upload/presign`, {
       method: 'POST', ...authed,
       body: JSON.stringify({ kind: 'post-video', filename: 'x.exe', contentType: 'application/x-msdownload', size: 100 }),

@@ -59,6 +59,12 @@ class StorageNotConfiguredError extends Error {}
 interface PresignResponse {
   key: string;
   uploadUrl: string;
+  /**
+   * The exact Content-Type the server bound into the signature. The PUT must
+   * send precisely this string — the server lowercases it, `File.type` is not
+   * guaranteed to be, and any difference is a 403 SignatureDoesNotMatch.
+   */
+  contentType?: string;
   expiresIn: number;
 }
 
@@ -146,9 +152,13 @@ export async function uploadMedia(
 
   if (isR2Configured) {
     try {
-      const { key, uploadUrl } = await presign(file, kind);
+      const { key, uploadUrl, contentType } = await presign(file, kind);
       onProgress?.(8);
-      await putWithProgress(uploadUrl, file, file.type, (pct) => onProgress?.(8 + Math.round(pct * 0.82)));
+      // Use the signed value, falling back to the file's own type for older
+      // server responses that do not echo it.
+      await putWithProgress(uploadUrl, file, contentType || file.type, (pct) =>
+        onProgress?.(8 + Math.round(pct * 0.82))
+      );
       onProgress?.(94);
       const ok = await verifyComplete(key);
       if (!ok) console.warn('[upload] object verification skipped/failed — continuing');

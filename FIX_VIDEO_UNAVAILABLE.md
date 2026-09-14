@@ -109,10 +109,11 @@ player instead of being a dead thumbnail.
 | Dead `blob:` URLs | `uploadMedia` used to swallow any R2 failure and return `URL.createObjectURL(file)`. That `blob:` URL was written to `posts.video_url` and reported as a success — then died with the page and showed "Video unavailable" forever, for everyone. A configured-but-failing backend now raises a friendly, retryable error; the session-local fallback remains only for genuine demo mode (and `data:` URLs, which are self-contained and safe to persist). |
 | Error copy | `createPost` no longer interpolates the raw Postgres message into a user toast; it logs to console and shows actionable copy. |
 | Upload limits | `CreatePostModal` now reads `UPLOAD_LIMITS` instead of its own hardcoded 50 MB / missing `video/x-m4v`, so the picker and `/api/upload/presign` cannot disagree. |
+| Signed MIME type | `/api/upload/presign` commented that Content-Type was "signed: the browser must PUT with this exact type" — it was not. The SDK signed only `host`, so a holder of the URL could store *any* Content-Type at that key, which is exactly how unplayable MIME types end up on otherwise valid objects. It now passes `signableHeaders: new Set(['content-type'])` (producing the `content-type;host` form Cloudflare documents) and echoes the signed value back, and `lib/upload.ts` PUTs that exact string rather than `file.type` — so enforcement cannot be defeated by a casing difference. |
 
 ## Verification
 
-`npm run test:media` — 48 assertions, all passing.
+`npm run test:media` — 51 assertions, all passing.
 
 The sandbox cannot reach `*.r2.cloudflarestorage.com`, so the harness
 (`scripts/test/`) boots:
@@ -138,8 +139,9 @@ recognised by `isR2Key`; the signed media URL returns **206** with correct
 `Content-Disposition: inline`; a tail seek and a full download both match the
 uploaded bytes; a legacy `application/octet-stream` object is repaired to
 `video/mp4`; path traversal, foreign keys and disallowed MIME types are
-rejected; and a tampered signature is refused with 403 (proving the mock's
-verification is real, not a rubber stamp).
+rejected; `Content-Type` is genuinely part of the PUT signature and a PUT that
+lies about its media type is refused with 403; and a tampered signature is
+refused with 403 (proving the mock's verification is real, not a rubber stamp).
 
 Part A of the same script re-runs the old client config side by side, so the
 `501 → 206` difference is visible in one output.
