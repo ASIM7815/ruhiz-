@@ -33,15 +33,23 @@ export function isR2Key(value?: string | null): value is string {
 }
 
 /** Resolve any media reference (URL or R2 key) into a displayable URL. */
-export async function resolveMediaUrl(ref?: string | null): Promise<string | null> {
+export async function resolveMediaUrl(ref?: string | null, opts?: { force?: boolean }): Promise<string | null> {
   if (!ref) return null;
   if (!isR2Key(ref)) return ref;
 
-  const cached = cache.get(ref);
-  if (cached && cached.expiresAt > Date.now() + SAFETY_MARGIN_MS) return cached.url;
+  if (!opts?.force) {
+    const cached = cache.get(ref);
+    if (cached && cached.expiresAt > Date.now() + SAFETY_MARGIN_MS) return cached.url;
 
-  const existing = inflight.get(ref);
-  if (existing) return existing;
+    const existing = inflight.get(ref);
+    if (existing) return existing;
+  } else {
+    // The caller hit a playback/load error with the URL we already handed out
+    // (most often a presigned URL that outlived its hour, or a transient blip).
+    // Drop it so the next sign is genuinely fresh.
+    cache.delete(ref);
+    inflight.delete(ref);
+  }
 
   const task = (async () => {
     const res = await fetch(`/api/media?key=${encodeURIComponent(ref)}`, { cache: 'no-store' });

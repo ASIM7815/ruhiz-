@@ -91,9 +91,22 @@ export async function POST(request: NextRequest) {
       Key: key,
       ContentType: contentType, // signed: the browser must PUT with this exact type
     });
-    const uploadUrl = await getSignedUrl(r2Client, command, { expiresIn: 900 });
+    const uploadUrl = await getSignedUrl(r2Client, command, {
+      expiresIn: 900,
+      // Bind the signature to Content-Type as well as Host, so the presigned URL
+      // really is scoped to "this key, this media type" — without it the SDK
+      // signs only `host` and a holder of the URL could store any Content-Type
+      // they liked at that key (which is how unplayable MIME types end up on
+      // otherwise valid objects). Matches the X-Amz-SignedHeaders=content-type;host
+      // form Cloudflare documents for R2.
+      //
+      // The caller MUST send exactly this header value, so `contentType` is
+      // echoed back below (it is lowercased here; File.type is not guaranteed
+      // to be) and lib/upload.ts uses that returned string rather than its own.
+      signableHeaders: new Set(['content-type']),
+    });
 
-    return NextResponse.json({ key, uploadUrl, expiresIn: 900 });
+    return NextResponse.json({ key, uploadUrl, contentType, expiresIn: 900 });
   } catch (error) {
     console.error('[upload/presign] error:', error);
     return NextResponse.json({ error: 'Could not create upload URL' }, { status: 500 });

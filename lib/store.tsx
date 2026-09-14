@@ -879,11 +879,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           // composer shows ONE accurate toast instead of a generic duplicate, and
           // log the raw DB error (code/message/details) for debugging.
           console.error('[Ruhiz] createPost insert failed:', error);
-          throw new Error(
-            error?.message
-              ? `Your moment could not be saved to Ruhiz (${error.message}). Please try again.`
-              : 'Post failed to save to Ruhiz. Please try again.'
-          );
+          // The raw database message goes to the console only; members get copy
+          // that says what to do rather than exposing internals.
+          throw new Error('Your post could not be saved to Ruhiz. Please check your connection and try again.');
         }
       }
       return optimistic;

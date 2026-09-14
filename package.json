@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test:media": "node scripts/test/e2e-video.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1131.0",
