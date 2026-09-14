@@ -215,7 +215,7 @@ function Composer({
                 <Icon name={type === 'video' ? 'video' : 'image'} size={26} />
               </div>
               <p className="font-semibold text-[var(--text)]">Click or drag & drop your {type}</p>
-              <p className="text-xs">{type === 'video' ? 'MP4, MOV or WebM · up to 50 MB' : 'JPG, PNG, GIF or WebP · up to 10 MB'}</p>
+              <p className="text-xs">{type === 'video' ? 'MP4, MOV or WebM · up to 300 MB' : 'JPG, PNG, GIF or WebP · up to 10 MB'}</p>
             </button>
           ) : (
             <div className="relative rounded-2xl overflow-hidden border border-[var(--border)] group">

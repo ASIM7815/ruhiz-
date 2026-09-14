@@ -32,7 +32,7 @@ export const UPLOAD_LIMITS: Record<UploadKind, { maxMB: number; mimes: string[] 
   'chat-image': { maxMB: 8, mimes: ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'] },
   avatar: { maxMB: 5, mimes: ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'] },
   cover: { maxMB: 8, mimes: ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'] },
-  'post-video': { maxMB: 50, mimes: ['video/mp4', 'video/quicktime', 'video/webm', 'video/x-m4v'] },
+  'post-video': { maxMB: 300, mimes: ['video/mp4', 'video/quicktime', 'video/webm', 'video/x-m4v'] },
 };
 
 export function validateUpload(file: File, kind: UploadKind): string | null {
