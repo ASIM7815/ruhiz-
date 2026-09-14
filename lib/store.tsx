@@ -849,8 +849,15 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             return real;
           }
           setPosts((prev) => prev.filter((p) => p.id !== optimistic.id));
-          toast('Post failed to save to Ruhiz. Please try again.', 'error');
-          throw error ?? new Error('Post insert failed');
+          // Postgrest errors are plain objects, not Error instances — wrap so the
+          // composer shows ONE accurate toast instead of a generic duplicate, and
+          // log the raw DB error (code/message/details) for debugging.
+          console.error('[Ruhiz] createPost insert failed:', error);
+          throw new Error(
+            error?.message
+              ? `Your moment could not be saved to Ruhiz (${error.message}). Please try again.`
+              : 'Post failed to save to Ruhiz. Please try again.'
+          );
         }
       }
       return optimistic;
