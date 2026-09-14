@@ -1185,46 +1185,100 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const sendMessage = useCallback(
     async (threadId: string, text: string) => {
       if (modeRef.current === 'supabase') {
+        const normalizedText = text.trim();
+        if (!normalizedText || normalizedText.length > 4000) {
+          toast('Messages must be between 1 and 4000 characters.', 'error');
+          return;
+        }
+
         const tempId = uid('pending-');
-        pendingMsgsRef.current.add(`${threadId}:${text}`);
+        const pendingKey = `${threadId}:${normalizedText}`;
+        pendingMsgsRef.current.add(pendingKey);
+        const optimisticAt = new Date().toISOString();
         setThreads((prev) =>
           prev.map((t) =>
             t.id === threadId
-              ? { ...t, messages: [...t.messages, { id: tempId, fromMe: true, text, at: new Date().toISOString(), pending: true }], lastMessageAt: new Date().toISOString() }
+              ? {
+                  ...t,
+                  messages: [...t.messages, { id: tempId, fromMe: true, text: normalizedText, at: optimisticAt, pending: true }],
+                  lastMessageAt: optimisticAt,
+                }
               : t
           )
         );
+        const discardOptimistic = () => {
+          pendingMsgsRef.current.delete(pendingKey);
+          setThreads((prev) =>
+            prev.map((t) => {
+              if (t.id !== threadId) return t;
+              const messages = t.messages.filter((m) => m.id !== tempId);
+              return { ...t, messages, lastMessageAt: messages.at(-1)?.at ?? null };
+            })
+          );
+        };
+
         const sb = safeClient();
-        const profileId = profileIdRef.current;
-        if (!sb || !profileId) return;
+        if (!sb) {
+          discardOptimistic();
+          toast('Your Ruhiz session is not connected to Supabase.', 'error');
+          return;
+        }
+
+        // The database stores profiles.id in messages.sender_id. Resolve that
+        // value from the current Supabase Auth user for every send; never use a
+        // username, demo id, or stale UI identity as the sender.
+        const {
+          data: { user },
+          error: authError,
+        } = await sb.auth.getUser();
+        if (authError || !user) {
+          discardOptimistic();
+          console.warn('[ruhiz] message auth lookup failed:', authError?.message ?? 'No authenticated user');
+          toast('Your Ruhiz session expired. Please log in again.', 'error');
+          return;
+        }
+
+        const { data: senderProfile, error: profileError } = await sb
+          .from('profiles')
+          .select('id')
+          .eq('user_id', user.id)
+          .maybeSingle();
+        const senderProfileId = senderProfile?.id as string | undefined;
+        if (profileError || !senderProfileId) {
+          discardOptimistic();
+          console.warn('[ruhiz] message profile lookup failed:', profileError?.message ?? 'No profile for authenticated user');
+          toast('Your Ruhiz profile is unavailable. Please log in again.', 'error');
+          return;
+        }
+        profileIdRef.current = senderProfileId;
+
         const { data, error } = await sb
           .from('messages')
-          .insert({ conversation_id: threadId, sender_id: profileId, content: text })
+          .insert({ conversation_id: threadId, sender_id: senderProfileId, content: normalizedText })
           .select('*')
           .single();
-        if (error) {
-          console.warn('[ruhiz] message failed:', error.message);
-          setThreads((prev) =>
-            prev.map((t) =>
-              t.id === threadId ? { ...t, messages: t.messages.map((m) => (m.id === tempId ? { ...m, pending: false } : m)) } : t
-            )
-          );
+        if (error || !data) {
+          discardOptimistic();
+          console.warn('[ruhiz] message failed:', error?.message ?? 'No message row returned');
           toast('Message failed to send. Check your connection.', 'error');
           return;
         }
-        // reconcile (realtime echo is deduped by id)
+        // Reconcile the optimistic row with the persisted row. The postgres_changes
+        // echo is deduplicated by id in handleIncomingMessage.
         setThreads((prev) =>
           prev.map((t) =>
             t.id === threadId
               ? {
                   ...t,
                   messages: t.messages.map((m) =>
-                    m.id === tempId ? { id: data.id, fromMe: true, text, at: data.created_at } : m
+                    m.id === tempId ? { id: data.id, fromMe: true, text: data.content ?? normalizedText, at: data.created_at } : m
                   ),
+                  lastMessageAt: data.created_at,
                 }
               : t
           )
         );
+        pendingMsgsRef.current.delete(pendingKey);
         return;
       }
 

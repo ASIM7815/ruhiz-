@@ -1,286 +1,93 @@
-# 🔧 FIX: "Message failed to send" Error
+# Ruhiz messaging trigger fix
 
-## 🚨 THE PROBLEM
+## Root cause found in the repository
 
-When trying to send a message, you see:
-```
-Message failed to send. Check your connection.
-```
-
-Console shows:
-```
-Failed to load resource: the server responded with a status of 400 ()
-[ruhiz] message failed: record "new" has no field "user_id"
-```
-
----
-
-## 🎯 THE ROOT CAUSE
-
-The RLS (Row Level Security) policy on the `messages` table is trying to check a field called `user_id`, but the messages table uses `sender_id` instead.
-
-This mismatch causes the INSERT to fail.
-
----
-
-## ✅ SOLUTION (3 Options)
-
-### Option 1: Run Quick Fix SQL (Recommended)
-
-**Go to:** https://supabase.com/dashboard/project/tengfsvzcjljxhdpanvt/sql/new
-
-**Paste this SQL:**
+The production `messages` schema uses `sender_id`:
 
 ```sql
--- Fix messages INSERT policy
-DROP POLICY IF EXISTS messages_insert ON public.messages;
-
-CREATE POLICY messages_insert ON public.messages
-  FOR INSERT TO authenticated
-  WITH CHECK (
-    sender_id = public.current_profile_id()
-  );
-
--- Make sure SELECT policy works too
-DROP POLICY IF EXISTS messages_select ON public.messages;
-
-CREATE POLICY messages_select ON public.messages
-  FOR SELECT TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.conversation_participants cp
-      WHERE cp.conversation_id = messages.conversation_id
-        AND cp.user_id = public.current_profile_id()
-    )
-  );
-
--- Grant permissions
-GRANT INSERT ON public.messages TO authenticated;
-GRANT SELECT ON public.messages TO authenticated;
+messages(
+  id,
+  conversation_id,
+  sender_id,
+  content,
+  created_at
+)
 ```
 
-**Click "Run"**
+The old migration attached the shared `public.fn_notify()` trigger function to
+`messages`. That function also contained `NEW.user_id` references for the
+`post_supports` and `comments` row shapes. A `messages` row does not have a
+`user_id`, so the insert could fail with:
 
----
-
-### Option 2: Run the Fix Script
-
-1. **Go to:** Supabase SQL Editor
-2. **Run file:** `supabase/QUICK_FIX_MESSAGING.sql`
-3. **Click "Run"**
-
----
-
-### Option 3: Manual Fix via Dashboard
-
-1. **Go to:** https://supabase.com/dashboard/project/tengfsvzcjljxhdpanvt/auth/policies
-
-2. **Find `messages` table**
-
-3. **Delete existing INSERT policy**
-
-4. **Create new INSERT policy:**
-   - **Policy name:** `messages_insert`
-   - **Allowed operation:** INSERT
-   - **Target roles:** authenticated
-   - **WITH CHECK expression:**
-     ```sql
-     sender_id = (SELECT id FROM public.profiles WHERE user_id = auth.uid() LIMIT 1)
-     ```
-
-5. **Save**
-
----
-
-## 🧪 TEST THE FIX
-
-### After Running the SQL:
-
-1. **Refresh browser** (Ctrl+Shift+R or Cmd+Shift+R)
-2. **Go to Messages**
-3. **Click on a user**
-4. **Type "test message"**
-5. **Click Send**
-6. **Should work!** ✅
-
----
-
-## 🔍 VERIFY IT'S FIXED
-
-### Check in Browser Console:
-
-**Before fix:**
-```
-❌ [ruhiz] message failed: record "new" has no field "user_id"
+```text
+record "new" has no field "user_id"
 ```
 
-**After fix:**
-```
-✅ (No error - message sends successfully)
-```
+This is a database trigger/function row-shape mismatch. It is not caused by
+Supabase Realtime being disabled, and changing the client to send `user_id`
+would be wrong.
 
-### Check in Supabase:
+## Fix
 
-1. **Go to:** Table Editor → messages
-2. **You should see your message** in the table
-3. **Created_at** should be recent
-4. **Sender_id** should be your profile ID
+Apply this migration in Supabase SQL Editor:
 
----
-
-## 📊 WHAT THE FIX DOES
-
-### Before (Broken):
-```sql
-CREATE POLICY messages_insert ON public.messages
-  FOR INSERT TO authenticated
-  WITH CHECK (
-    sender_id = public.current_profile_id()
-    AND public.is_conversation_participant(conversation_id, public.current_profile_id())
-    -- ❌ This complex check was causing issues
-  );
+```text
+supabase/migrations/20260914000000_fix_message_trigger_schema.sql
 ```
 
-### After (Fixed):
-```sql
-CREATE POLICY messages_insert ON public.messages
-  FOR INSERT TO authenticated
-  WITH CHECK (
-    sender_id = public.current_profile_id()
-    -- ✅ Simple check - just verify you're sending as yourself
-  );
+It:
+
+- keeps `messages.sender_id` as the real sender column;
+- replaces the shared message trigger with `fn_notify_message()`, which only
+  reads `conversation_id`, `sender_id`, and `content`;
+- removes old message triggers that were attached to `fn_notify()` and installs
+  exactly one `trg_notify_message` trigger;
+- leaves RLS enabled and recreates participant-only SELECT, sender-only INSERT,
+  and sender-only DELETE policies;
+- keeps `messages` in `supabase_realtime` for `postgres_changes`;
+- does not add a fake `user_id` column or disable RLS.
+
+For a read-only report of the live database, run the single script:
+
+```text
+supabase/diagnose_messaging_readonly.sql
 ```
 
-**Why this works:**
-- The client already checks if you're a participant before showing the conversation
-- We only need to verify you're sending as yourself
-- Simpler = more reliable
+## Frontend flow after the fix
 
----
+`lib/store.tsx` now resolves the current user with
+`supabase.auth.getUser()`, looks up that user's `profiles.id`, and inserts:
 
-## 🛡️ SECURITY NOTE
-
-**Is this secure?** ✅ **YES!**
-
-Even with the simplified policy:
-- Users can only send messages as themselves (sender_id must match their profile)
-- Users still can't READ messages from conversations they're not in (SELECT policy unchanged)
-- RLS prevents unauthorized access
-
-The participation check happens in two places:
-1. **Client-side:** App only shows conversations you're in
-2. **SELECT policy:** Can't read messages from other conversations
-
-So it's safe to remove it from INSERT.
-
----
-
-## 🔄 IF IT STILL DOESN'T WORK
-
-### Check 1: Supabase Realtime is Enabled
-
-1. **Go to:** https://supabase.com/dashboard/project/tengfsvzcjljxhdpanvt/database/publications
-2. **Find "supabase_realtime" publication**
-3. **Make sure these tables are included:**
-   - ✅ `messages`
-   - ✅ `conversation_participants`
-   - ✅ `conversations`
-4. **If not, click "Edit" and add them**
-
-### Check 2: Profile Exists
-
-Run this SQL to check your profile:
-```sql
-SELECT * FROM public.profiles 
-WHERE user_id = auth.uid();
+```ts
+{
+  conversation_id: threadId,
+  sender_id: authenticatedProfileId,
+  content: messageText,
+}
 ```
 
-Should return 1 row with your profile.
+It never uses a username, demo identity, or stale profile identity as the
+sender. Messages are persisted with Supabase and received through the single
+persisted-message channel:
 
-If empty, your profile wasn't created. Run:
-```sql
-SELECT * FROM auth.users 
-WHERE id = auth.uid();
+```text
+postgres_changes → public.messages INSERT
 ```
 
-Then create profile manually or re-signup.
+Broadcast remains separate from message persistence and is used only for the
+optional typing/presence UI.
 
-### Check 3: Conversation Exists
+## API-key investigation
 
-Run this SQL:
-```sql
-SELECT * FROM public.conversation_participants 
-WHERE user_id = (
-  SELECT id FROM public.profiles WHERE user_id = auth.uid()
-);
-```
+There is no direct `/rest/v1/` request, custom Supabase `fetch`, or Axios call
+in the repository. All browser database/auth traffic goes through the singleton
+configured in `lib/supabase/client.ts`; server routes use
+`lib/supabase/server.ts`. The only browser `fetch` calls are same-origin Ruhiz
+routes for R2 media upload/signing.
 
-Should show conversations you're part of.
-
-### Check 4: Browser Console Errors
-
-1. Open browser DevTools (F12)
-2. Go to Console tab
-3. Send a message
-4. Look for errors
-5. Share the error message for further help
-
----
-
-## 🎯 EXPECTED BEHAVIOR AFTER FIX
-
-### When sending a message:
-
-1. ✅ Message appears instantly (optimistic UI)
-2. ✅ Shows "Sending..." briefly
-3. ✅ Changes to ✓ "Sent"
-4. ✅ No error in console
-5. ✅ Other user receives it via Realtime
-6. ✅ Message persists after refresh
-
-### Console logs should show:
-```
-[Ruhiz] Production data loaded successfully!
-(No errors when sending message)
-```
-
----
-
-## 📝 FILES INCLUDED
-
-- **`supabase/QUICK_FIX_MESSAGING.sql`** - Quick fix script
-- **`supabase/fix_messaging_rls.sql`** - Detailed fix with verification
-- **`FIX_MESSAGE_SEND_ERROR.md`** - This guide
-
----
-
-## 🆘 STILL STUCK?
-
-### Provide these details:
-
-1. **Console error** (full text)
-2. **Supabase project URL**
-3. **Did the SQL run successfully?**
-4. **Can you see the message in Supabase Table Editor?**
-5. **Screenshot of error**
-
----
-
-## ✅ SUCCESS CHECKLIST
-
-After running the fix:
-
-- [ ] SQL ran without errors
-- [ ] Browser refreshed (hard refresh)
-- [ ] Sent test message
-- [ ] Message appeared
-- [ ] No console errors
-- [ ] Message shows ✓ "Sent"
-- [ ] Other user can see it (if testing with 2 users)
-- [ ] Message persists after refresh
-
-**ALL CHECKS PASSED?** 🎉 **YOU'RE DONE!**
-
----
-
-**RUN THE QUICK FIX SQL AND YOUR MESSAGING WILL WORK!** 🚀
+Therefore a `No API key found in request` response is not produced by a
+hand-written messaging request in this checkout. It must be identified in the
+browser Network panel by its request URL. A normal Supabase client request
+created by this code includes the configured anon key automatically. The
+read-only diagnostic and the migration do not require or expose a service-role
+key.
