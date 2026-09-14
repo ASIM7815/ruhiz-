@@ -22,6 +22,14 @@ export default function Hero() {
     return () => clearInterval(timer);
   }, [slides.length]);
 
+  const scrollToFeatures = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const featuresSection = document.getElementById('features');
+    if (featuresSection) {
+      featuresSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
   return (
     <section className="relative w-full min-h-screen overflow-hidden">
       {/* Slideshow Background */}
@@ -66,7 +74,7 @@ export default function Hero() {
             {/* CTA Buttons */}
             <div className="flex flex-col sm:flex-row gap-4">
               <Link
-                href="/join"
+                href="/login"
                 className="inline-flex items-center justify-center gap-2 px-8 py-4 bg-ruhiz-teal text-white font-medium rounded-full hover:bg-opacity-90 transition-all shadow-xl hover:shadow-2xl"
               >
                 <span>Join the Community</span>
@@ -74,12 +82,12 @@ export default function Hero() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                 </svg>
               </Link>
-              <Link
-                href="/how-it-works"
-                className="inline-flex items-center justify-center px-8 py-4 bg-white text-gray-900 font-medium rounded-full border-2 border-white hover:bg-gray-50 transition-all shadow-xl"
+              <button
+                onClick={scrollToFeatures}
+                className="inline-flex items-center justify-center px-8 py-4 bg-white text-gray-900 font-medium rounded-full border-2 border-white hover:bg-gray-50 transition-all shadow-xl cursor-pointer"
               >
                 Learn How It Works
-              </Link>
+              </button>
             </div>
           </div>
         </div>
