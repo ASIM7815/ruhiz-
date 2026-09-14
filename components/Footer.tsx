@@ -92,7 +92,7 @@ export default function Footer() {
               <li><a href="tel:988" className="text-gray-600 hover:text-ruhiz-teal transition-colors">Crisis Helpline (988)</a></li>
               <li><a href="https://988lifeline.org" target="_blank" rel="noopener noreferrer" className="text-gray-600 hover:text-ruhiz-teal transition-colors">Mental Health Resources</a></li>
               <li><Link href="/feed" className="text-gray-600 hover:text-ruhiz-teal transition-colors">Community Guidelines</Link></li>
-              <li><a href="mailto:support@ruhiz.com" className="text-gray-600 hover:text-ruhiz-teal transition-colors">Contact Support</a></li>
+              <li><a href="mailto:mohammadasimsaad@gmail.com" className="text-gray-600 hover:text-ruhiz-teal transition-colors">Contact Support</a></li>
             </ul>
           </div>
 
