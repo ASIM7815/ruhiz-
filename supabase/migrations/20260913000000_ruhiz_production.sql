@@ -242,11 +242,12 @@ begin
     n := n + 1;
     candidate := base || n::text;
   end loop;
-  insert into public.profiles (user_id, username, display_name)
+  insert into public.profiles (user_id, username, display_name, is_persona)
   values (
     new.id,
     candidate,
-    coalesce(nullif(new.raw_user_meta_data->>'display_name', ''), nullif(new.raw_user_meta_data->>'full_name', ''), candidate)
+    coalesce(nullif(new.raw_user_meta_data->>'display_name', ''), nullif(new.raw_user_meta_data->>'full_name', ''), candidate),
+    false  -- ✅ Real users are NEVER personas/demo accounts
   );
   return new;
 end $$;

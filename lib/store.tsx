@@ -1257,12 +1257,14 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           .insert({ conversation_id: threadId, sender_id: senderProfileId, content: normalizedText })
           .select('*')
           .single();
+        console.log('[DEBUG] Message INSERT:', { threadId, senderProfileId, content: normalizedText, data, error });
         if (error || !data) {
           discardOptimistic();
           console.warn('[ruhiz] message failed:', error?.message ?? 'No message row returned');
           toast('Message failed to send. Check your connection.', 'error');
           return;
         }
+        console.log('[DEBUG] Message saved successfully:', data.id);
         // Reconcile the optimistic row with the persisted row. The postgres_changes
         // echo is deduplicated by id in handleIncomingMessage.
         setThreads((prev) =>
