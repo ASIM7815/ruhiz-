@@ -2,7 +2,7 @@
 
 import { fileToDataURL } from './format';
 export { fileToDataURL, blobToFile } from './format';
-import { isR2Configured } from './config';
+import { isR2Configured, isSupabaseConfigured } from './config';
 
 /**
  * Production media upload pipeline.
@@ -49,6 +49,13 @@ export function validateUpload(file: File, kind: UploadKind): string | null {
   return null;
 }
 
+/**
+ * The server has no media storage configured at all (demo deployment). Only
+ * this case may fall back to session-local media — a configured backend that
+ * simply failed must not, because the fallback URL would be persisted.
+ */
+class StorageNotConfiguredError extends Error {}
+
 interface PresignResponse {
   key: string;
   uploadUrl: string;
@@ -62,6 +69,7 @@ async function presign(file: File, kind: UploadKind): Promise<PresignResponse> {
     body: JSON.stringify({ kind, filename: file.name, contentType: file.type, size: file.size }),
   });
   const json = await res.json().catch(() => ({}));
+  if (res.status === 503) throw new StorageNotConfiguredError(json.error || 'Media storage is not configured.');
   if (!res.ok) throw new Error(json.error || `Could not start upload (${res.status})`);
   return json as PresignResponse;
 }
@@ -147,17 +155,42 @@ export async function uploadMedia(
       onProgress?.(100);
       return { key, storage: 'r2' };
     } catch (err) {
-      console.error('[upload] R2 pipeline failed, falling back to local storage:', err);
-      // fall through to local fallback so the user can still post
+      if (!(err instanceof StorageNotConfiguredError)) {
+        // Storage IS configured but this upload did not land. Falling back here
+        // used to hand the composer a blob: URL, which was written to
+        // posts.video_url and reported as a success — then died with the page
+        // and rendered "Video unavailable" forever, for everyone. Fail loudly
+        // (but kindly) so nothing unplayable is ever persisted.
+        console.error('[upload] media upload failed:', err);
+        throw new Error(
+          file.type.startsWith('video/')
+            ? 'Your video could not be uploaded. Please check your connection and try again.'
+            : 'Your photo could not be uploaded. Please check your connection and try again.'
+        );
+      }
+      console.warn('[upload] media storage not configured — using session-local fallback');
+      // fall through to local fallback so the app keeps working in demo mode
     }
   }
 
-  // Demo fallback
+  // Demo fallback. A data: URL is self-contained and safe to persist; a blob:
+  // URL is tied to this page session, so it must never reach the database.
   if (file.type.startsWith('image/') && file.size <= 3.5 * 1024 * 1024) {
     const dataUrl = await fileToDataURL(file);
     onProgress?.(100);
     return { key: dataUrl, storage: 'local' };
   }
+
+  if (isSupabaseConfigured) {
+    // Real database in play: refuse rather than store a reference that cannot
+    // survive a reload.
+    throw new Error(
+      file.type.startsWith('video/')
+        ? 'Video hosting is not set up yet, so videos cannot be shared. Please try a photo instead.'
+        : 'That file is too large to share without media hosting set up.'
+    );
+  }
+
   const objUrl = URL.createObjectURL(file);
   onProgress?.(100);
   return { key: objUrl, storage: 'local' };

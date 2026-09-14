@@ -6,6 +6,7 @@ import { useNav } from '@/components/app/nav';
 import { Icon } from '@/components/ui/Icons';
 import { EmptyState } from '@/components/ui/Primitives';
 import PostCard from '@/components/post/PostCard';
+import { R2Image } from '@/components/ui/Media';
 
 export default function SavedView() {
   const store = useStore();
@@ -70,8 +71,7 @@ export default function SavedView() {
               className="relative aspect-square rounded-xl overflow-hidden border border-[var(--border)] group"
             >
               {p.image ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={p.image} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                <R2Image mediaKey={p.image} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
               ) : p.video ? (
                 <span className="w-full h-full bg-[var(--card-2)] flex flex-col items-center justify-center gap-1 text-[var(--muted)]">
                   <Icon name="video" size={22} />
@@ -97,8 +97,7 @@ export default function SavedView() {
           <button className="absolute top-4 right-4 p-2 text-white/80 hover:text-white" aria-label="Close image">
             <Icon name="close" size={26} />
           </button>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={lightbox} alt="" className="max-w-full max-h-[90vh] rounded-lg object-contain pop-in" />
+          <R2Image mediaKey={lightbox} alt="" className="max-w-full max-h-[90vh] rounded-lg object-contain pop-in" />
         </div>
       )}
     </div>

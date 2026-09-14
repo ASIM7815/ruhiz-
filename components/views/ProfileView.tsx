@@ -8,7 +8,7 @@ import { Avatar, Badge, FollowButton, Modal, ModalHeader, PrimaryButton, GhostBu
 import PostCard from '@/components/post/PostCard';
 import ImageCropModal from '@/components/profile/ImageCropModal';
 import { uploadMedia, blobToFile, fileToDataURL } from '@/lib/upload';
-import { useMediaUrl } from '@/components/ui/Media';
+import { R2Image, R2Video, useMediaUrl } from '@/components/ui/Media';
 import { fullDate, compactCount, initials } from '@/lib/format';
 import { ME_ID } from '@/lib/data/sample';
 import type { UserProfile } from '@/lib/types';
@@ -28,7 +28,7 @@ export default function ProfileView({ userId, onCreate }: { userId?: string; onC
   const [cropSrc, setCropSrc] = useState('');
   const [uploadingImage, setUploadingImage] = useState(false);
   const [, setProgress] = useState(0);
-  const [lightbox, setLightbox] = useState<string | null>(null);
+  const [lightbox, setLightbox] = useState<{ ref: string; kind: 'image' | 'video' } | null>(null);
   const avatarInput = useRef<HTMLInputElement>(null);
   const coverInput = useRef<HTMLInputElement>(null);
 
@@ -284,7 +284,13 @@ export default function ProfileView({ userId, onCreate }: { userId?: string; onC
         ))}
 
       {(tab === 'photos' || tab === 'videos') && (
-        <MediaGrid posts={tab === 'photos' ? photos : videos} kind={tab} onImage={(src) => setLightbox(src)} onCreate={onCreate} isOwn={isOwn} />
+        <MediaGrid
+          posts={tab === 'photos' ? photos : videos}
+          kind={tab}
+          onOpen={(ref, kind) => setLightbox({ ref, kind })}
+          onCreate={onCreate}
+          isOwn={isOwn}
+        />
       )}
 
       {/* Modals */}
@@ -301,9 +307,19 @@ export default function ProfileView({ userId, onCreate }: { userId?: string; onC
       />
 
       {lightbox && (
-        <div className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4" onClick={() => setLightbox(null)}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={lightbox} alt="" className="max-w-full max-h-[90vh] rounded-lg object-contain pop-in" />
+        <div
+          className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4"
+          onClick={() => setLightbox(null)}
+        >
+          {lightbox.kind === 'video' ? (
+            <div className="max-w-4xl w-full pop-in" onClick={(e) => e.stopPropagation()}>
+              <R2Video mediaKey={lightbox.ref} className="w-full max-h-[90vh] rounded-lg bg-black" />
+            </div>
+          ) : (
+            <div className="pop-in" onClick={(e) => e.stopPropagation()}>
+              <R2Image mediaKey={lightbox.ref} alt="" className="max-w-full max-h-[90vh] rounded-lg object-contain" />
+            </div>
+          )}
         </div>
       )}
       <span className="sr-only">{initials(user.name)}</span>
@@ -323,13 +339,14 @@ function Stat({ label, value, hover = false }: { label: string; value: number; h
 function MediaGrid({
   posts,
   kind,
-  onImage,
+  onOpen,
   onCreate,
   isOwn,
 }: {
   posts: import('@/lib/types').Post[];
   kind: 'photos' | 'videos';
-  onImage: (src: string) => void;
+  /** Hands the stored media reference (URL *or* private R2 key) to the lightbox. */
+  onOpen: (ref: string, kind: 'image' | 'video') => void;
   onCreate: () => void;
   isOwn: boolean;
 }) {
@@ -353,17 +370,30 @@ function MediaGrid({
     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
       {posts.map((p) =>
         p.image ? (
-          <button key={p.id} onClick={() => onImage(p.image!)} className="relative aspect-square rounded-xl overflow-hidden border border-[var(--border)] group">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={p.image} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+          <button
+            key={p.id}
+            onClick={() => onOpen(p.image!, 'image')}
+            className="relative aspect-square rounded-xl overflow-hidden border border-[var(--border)] group"
+          >
+            <R2Image mediaKey={p.image} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
           </button>
         ) : (
-          <div key={p.id} className="relative aspect-square rounded-xl overflow-hidden border border-[var(--border)] bg-black">
-            <video src={p.video} className="w-full h-full object-cover" muted preload="metadata" />
-            <span className="absolute inset-0 flex items-center justify-center text-white/90">
+          <button
+            key={p.id}
+            onClick={() => p.video && onOpen(p.video, 'video')}
+            className="relative aspect-square rounded-xl overflow-hidden border border-[var(--border)] bg-black group"
+            aria-label="Play video"
+          >
+            <R2Video
+              mediaKey={p.video}
+              className="w-full h-full object-cover pointer-events-none"
+              controls={false}
+              muted
+            />
+            <span className="absolute inset-0 flex items-center justify-center text-white/90 group-hover:scale-110 transition-transform">
               <Icon name="play" size={38} />
             </span>
-          </div>
+          </button>
         )
       )}
     </div>

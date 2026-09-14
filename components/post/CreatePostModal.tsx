@@ -4,7 +4,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import { useStore } from '@/lib/store';
 import { Icon } from '@/components/ui/Icons';
 import { Modal, ModalHeader, Spinner } from '@/components/ui/Primitives';
-import { uploadMedia, fileToDataURL } from '@/lib/upload';
+import { uploadMedia, fileToDataURL, UPLOAD_LIMITS } from '@/lib/upload';
 import { TOPICS } from '@/lib/data/sample';
 import type { PostType } from '@/lib/types';
 import { formatBytes } from '@/lib/format';
@@ -116,8 +116,12 @@ function Composer({
     [text, topics]
   );
 
-  const maxMB = type === 'video' ? 50 : 10;
-  const accept = type === 'video' ? 'video/mp4,video/quicktime,video/webm' : 'image/jpeg,image/png,image/gif,image/webp';
+  // Same allow-list the upload pipeline enforces — previously the picker said
+  // 50 MB while /api/upload/presign allowed 300 MB and omitted video/x-m4v, so
+  // files could be rejected after the member had already waited on a progress bar.
+  const limits = UPLOAD_LIMITS[type === 'video' ? 'post-video' : 'post-image'];
+  const maxMB = limits.maxMB;
+  const accept = limits.mimes.join(',');
 
   const pickFile = async (f: File) => {
     setError('');
@@ -167,8 +171,12 @@ function Composer({
         storage === 'r2' ? 'success' : 'success'
       );
       onClose();
-    } catch {
-      store.toast('Something went wrong while posting', 'error');
+    } catch (err) {
+      // uploadMedia/createPost throw plain Errors carrying copy that is already
+      // safe to show. Anything unexpected still gets the generic message, so
+      // internals never leak into the UI.
+      const message = err instanceof Error && err.message ? err.message : '';
+      store.toast(message || 'Something went wrong while posting', 'error');
     } finally {
       setUploading(false);
     }

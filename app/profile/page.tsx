@@ -7,6 +7,7 @@ import Image from 'next/image';
 import ImageCropModal from '@/components/profile/ImageCropModal';
 import { uploadMedia } from '@/lib/upload';
 import { ensureProfile } from '@/lib/backend/api';
+import { useMediaUrl } from '@/components/ui/Media';
 
 export default function ProfilePage() {
   const [user, setUser] = useState<any>(null);
@@ -27,6 +28,11 @@ export default function ProfilePage() {
   
   const supabase = createClient();
   const router = useRouter();
+
+  // cover_url / avatar_url hold either a public URL or a private R2 object key;
+  // a bare key is not a usable src and must be exchanged for a signed URL.
+  const resolvedCover = useMediaUrl(profile?.cover_url ?? null);
+  const resolvedAvatar = useMediaUrl(profile?.avatar_url ?? null);
 
   useEffect(() => {
     loadProfile();
@@ -141,9 +147,9 @@ export default function ProfilePage() {
     <div className="min-h-screen bg-[#F7F9F7]">
       {/* Cover Image */}
       <div className="relative w-full h-[300px] sm:h-[400px] bg-gradient-to-br from-orange-200 via-pink-200 to-purple-300 overflow-hidden">
-        {profile?.cover_url ? (
+        {resolvedCover ? (
           <img
-            src={profile.cover_url}
+            src={resolvedCover}
             alt="Cover"
             className="w-full h-full object-cover"
           />
@@ -178,9 +184,9 @@ export default function ProfilePage() {
             {/* Profile Photo */}
             <div className="relative">
               <div className="w-32 h-32 sm:w-40 sm:h-40 rounded-full border-4 border-white bg-[#8FC9A8] overflow-hidden shadow-xl">
-                {profile?.avatar_url ? (
+                {resolvedAvatar ? (
                   <img
-                    src={profile.avatar_url}
+                    src={resolvedAvatar}
                     alt={profile.username}
                     className="w-full h-full object-cover"
                   />
