@@ -316,9 +316,11 @@ create table if not exists public.post_problems (
 create index if not exists idx_post_problems_problem on public.post_problems (problem_id);
 
 -- Deterministic classifier — the SQL twin of lib/recsys/classifier.ts.
+-- SECURITY DEFINER: runs as the function owner (postgres) so it can read the
+-- problems taxonomy regardless of the calling role.
 create or replace function public.fn_classify_text(p_content text, p_topics text[])
 returns jsonb
-language plpgsql stable as $$
+language plpgsql stable security definer set search_path = public as $$
 declare
   r record;
   score double precision;
@@ -381,8 +383,14 @@ begin
   return v_result;
 end $$;
 
+-- SECURITY DEFINER is REQUIRED here: post_problems is RLS-protected with a
+-- select-only policy (it is trigger-maintained derived data). Without definer
+-- rights the AFTER INSERT trigger runs as the `authenticated` caller and every
+-- user post insert dies with "new row violates row-level security policy for
+-- table post_problems", rolling the post back. Same pattern as fn_bump_counter
+-- / fn_notify below. search_path is pinned to avoid schema shadowing.
 create or replace function public.fn_classify_post()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql security definer set search_path = public as $$
 declare
   probs jsonb;
   pid text;
@@ -1371,8 +1379,7 @@ begin
     update public.posts set user_id = v_me
     where id in (
       'b0000000-0000-4000-8000-000000000011',
-      'b0000000-0000-4000-8000-000000000012',
-      'b0000000-0000-4000-8000-000000000013'
+      'b0000000-0000-4000-8000-000000000012'
     );
     raise notice 'Demo posts attributed to mohammadasimsaad@gmail.com';
   else
@@ -1392,13 +1399,11 @@ insert into public.comments (id, post_id, user_id, content, created_at) values
   ('c0000000-0000-4000-8000-000000000008', 'b0000000-0000-4000-8000-000000000006', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a0a', 'Crying in the parking lot… you just described my last year.', now() - interval '34 hours'),
   ('c0000000-0000-4000-8000-000000000009', 'b0000000-0000-4000-8000-000000000006', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a01', 'Choosing yourself IS the work. Congratulations, David.', now() - interval '31 hours'),
   ('c0000000-0000-4000-8000-000000000010', 'b0000000-0000-4000-8000-000000000007', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a02', 'The 4am club represents! 💪',                        now() - interval '48 hours'),
-  ('c0000000-0000-4000-8000-000000000011', 'b0000000-0000-4000-8000-000000000008', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a09', 'Jordan… I''m tearing up. Thank you for trusting us with this.', now() - interval '58 hours'),
-  ('c0000000-0000-4000-8000-000000000012', 'b0000000-0000-4000-8000-000000000008', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a08', 'This gave me chills, brother.',                      now() - interval '53 hours'),
+  -- comments for removed video posts b…0008 / b…0016 intentionally omitted (FK safety)
   ('c0000000-0000-4000-8000-000000000013', 'b0000000-0000-4000-8000-000000000010', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a03', 'Thank you for being there at 3am, Alex.',            now() - interval '84 hours'),
   ('c0000000-0000-4000-8000-000000000014', 'b0000000-0000-4000-8000-000000000014', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a04', 'Walking 10 minutes after lunch. That''s it. That''s the comment.', now() - interval '110 hours'),
   ('c0000000-0000-4000-8000-000000000015', 'b0000000-0000-4000-8000-000000000014', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a07', 'Drinking water before opening any app 🙈',           now() - interval '108 hours'),
   ('c0000000-0000-4000-8000-000000000016', 'b0000000-0000-4000-8000-000000000012', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a03', 'The light here! So cozy.',                           now() - interval '96 hours'),
-  ('c0000000-0000-4000-8000-000000000017', 'b0000000-0000-4000-8000-000000000016', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a0a', 'Sharing this with my whole night-shift crew.',       now() - interval '163 hours'),
   ('c0000000-0000-4000-8000-000000000018', 'b0000000-0000-4000-8000-000000000011', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a01', 'Boundaries are a skill and you''re getting good at it 👏', now() - interval '10 hours'),
   ('c0000000-0000-4000-8000-000000000019', 'b0000000-0000-4000-8000-000000000011', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a05', 'Rest is productive too. Proud of you!',              now() - interval '7 hours')
 on conflict (id) do nothing;
@@ -1446,14 +1451,13 @@ begin
     ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a09', v_me, now() - interval '150 days')
   on conflict do nothing;
 
-  -- supports on posts
+  -- supports on posts (removed video posts b…0008/b…0013/b…0016 intentionally omitted — FK safety)
   insert into public.post_supports (post_id, user_id, created_at) values
     ('b0000000-0000-4000-8000-000000000001', v_me, now() - interval '90 minutes'),
     ('b0000000-0000-4000-8000-000000000002', v_me, now() - interval '4 hours'),
     ('b0000000-0000-4000-8000-000000000004', v_me, now() - interval '11 hours'),
     ('b0000000-0000-4000-8000-000000000006', v_me, now() - interval '30 hours'),
-    ('b0000000-0000-4000-8000-000000000014', v_me, now() - interval '110 hours'),
-    ('b0000000-0000-4000-8000-000000000016', v_me, now() - interval '160 hours')
+    ('b0000000-0000-4000-8000-000000000014', v_me, now() - interval '110 hours')
   on conflict do nothing;
 
   -- saves
@@ -1461,8 +1465,7 @@ begin
     ('b0000000-0000-4000-8000-000000000001', v_me, now() - interval '80 minutes'),
     ('b0000000-0000-4000-8000-000000000002', v_me, now() - interval '4 hours'),
     ('b0000000-0000-4000-8000-000000000005', v_me, now() - interval '24 hours'),
-    ('b0000000-0000-4000-8000-000000000015', v_me, now() - interval '130 hours'),
-    ('b0000000-0000-4000-8000-000000000016', v_me, now() - interval '158 hours')
+    ('b0000000-0000-4000-8000-000000000015', v_me, now() - interval '130 hours')
   on conflict do nothing;
 
   -- been there
@@ -1471,8 +1474,7 @@ begin
     ('b0000000-0000-4000-8000-000000000003', v_me, now() - interval '8 hours'),
     ('b0000000-0000-4000-8000-000000000004', v_me, now() - interval '11 hours'),
     ('b0000000-0000-4000-8000-000000000006', v_me, now() - interval '30 hours'),
-    ('b0000000-0000-4000-8000-000000000010', v_me, now() - interval '88 hours'),
-    ('b0000000-0000-4000-8000-000000000016', v_me, now() - interval '160 hours')
+    ('b0000000-0000-4000-8000-000000000010', v_me, now() - interval '88 hours')
   on conflict do nothing;
 
   -- feed impressions (views) across the seed posts
@@ -1482,9 +1484,9 @@ begin
   where id in ('b0000000-0000-4000-8000-000000000001','b0000000-0000-4000-8000-000000000002',
                'b0000000-0000-4000-8000-000000000003','b0000000-0000-4000-8000-000000000004',
                'b0000000-0000-4000-8000-000000000005','b0000000-0000-4000-8000-000000000006',
-               'b0000000-0000-4000-8000-000000000008','b0000000-0000-4000-8000-000000000010',
+               'b0000000-0000-4000-8000-000000000010',
                'b0000000-0000-4000-8000-000000000011','b0000000-0000-4000-8000-000000000012',
-               'b0000000-0000-4000-8000-000000000014','b0000000-0000-4000-8000-000000000016')
+               'b0000000-0000-4000-8000-000000000014')
   on conflict do nothing;
 
   -- interaction activities (so scores can be recomputed deterministically)
@@ -1495,18 +1497,15 @@ begin
     ('b0000000-0000-4000-8000-000000000004', 'support', now() - interval '11 hours'),
     ('b0000000-0000-4000-8000-000000000006', 'support', now() - interval '30 hours'),
     ('b0000000-0000-4000-8000-000000000014', 'support', now() - interval '110 hours'),
-    ('b0000000-0000-4000-8000-000000000016', 'support', now() - interval '160 hours'),
     ('b0000000-0000-4000-8000-000000000001', 'save',   now() - interval '80 minutes'),
     ('b0000000-0000-4000-8000-000000000002', 'save',   now() - interval '4 hours'),
     ('b0000000-0000-4000-8000-000000000005', 'save',   now() - interval '24 hours'),
     ('b0000000-0000-4000-8000-000000000015', 'save',   now() - interval '130 hours'),
-    ('b0000000-0000-4000-8000-000000000016', 'save',   now() - interval '158 hours'),
     ('b0000000-0000-4000-8000-000000000002', 'been_there', now() - interval '4 hours'),
     ('b0000000-0000-4000-8000-000000000003', 'been_there', now() - interval '8 hours'),
     ('b0000000-0000-4000-8000-000000000004', 'been_there', now() - interval '11 hours'),
     ('b0000000-0000-4000-8000-000000000006', 'been_there', now() - interval '30 hours'),
-    ('b0000000-0000-4000-8000-000000000010', 'been_there', now() - interval '88 hours'),
-    ('b0000000-0000-4000-8000-000000000016', 'been_there', now() - interval '160 hours')
+    ('b0000000-0000-4000-8000-000000000010', 'been_there', now() - interval '88 hours')
   ) as s(post_id, action, at)
   where not exists (
     select 1 from public.activities a
