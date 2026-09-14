@@ -99,6 +99,7 @@ export default function SignUpPage() {
       }
 
       // Sign up with Supabase Auth
+      const redirectUrl = process.env.NEXT_PUBLIC_SITE_URL || window.location.origin;
       const { data, error: signUpError } = await supabase.auth.signUp({
         email: email.trim(),
         password,
@@ -107,7 +108,7 @@ export default function SignUpPage() {
             username: trimmedUsername,
             display_name: trimmedUsername,
           },
-          emailRedirectTo: `${window.location.origin}/auth/callback?next=/auth/verified`,
+          emailRedirectTo: `${redirectUrl}/auth/callback?next=/auth/verified`,
         },
       });
 

@@ -18,11 +18,12 @@ function ConfirmEmailContent() {
     setResendMessage('');
 
     try {
+      const redirectUrl = process.env.NEXT_PUBLIC_SITE_URL || window.location.origin;
       const { error } = await supabase.auth.resend({
         type: 'signup',
         email: email,
         options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback?next=/auth/verified`,
+          emailRedirectTo: `${redirectUrl}/auth/callback?next=/auth/verified`,
         },
       });
 
