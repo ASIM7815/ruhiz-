@@ -110,10 +110,40 @@ export function R2Video({
     };
   }, [mediaKey]);
 
+  // Helper function to extract YouTube video ID
+  const getYouTubeVideoId = (url: string): string | null => {
+    const patterns = [
+      /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/,
+      /^([a-zA-Z0-9_-]{11})$/, // Direct video ID
+    ];
+    for (const pattern of patterns) {
+      const match = url.match(pattern);
+      if (match) return match[1];
+    }
+    return null;
+  };
+
   if (!mediaKey || failed || !url) {
     return (
       <div className={`w-full bg-black/80 flex items-center justify-center text-white/70 ${className ?? ''}`} style={{ minHeight: 220 }}>
         <p className="text-sm">Video unavailable</p>
+      </div>
+    );
+  }
+
+  // Check if URL is a YouTube link
+  const youtubeId = getYouTubeVideoId(url);
+  if (youtubeId) {
+    return (
+      <div className={`relative w-full ${className ?? ''}`} style={{ paddingBottom: '56.25%' /* 16:9 aspect ratio */ }}>
+        <iframe
+          src={`https://www.youtube.com/embed/${youtubeId}${controls ? '' : '?controls=0'}`}
+          className="absolute top-0 left-0 w-full h-full rounded-xl"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowFullScreen
+          title="YouTube video"
+          onLoad={() => onPlay?.()}
+        />
       </div>
     );
   }

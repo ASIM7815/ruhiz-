@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import ImageCropModal from '@/components/profile/ImageCropModal';
 import { uploadMedia } from '@/lib/upload';
+import { ensureProfile } from '@/lib/backend/api';
 
 export default function ProfilePage() {
   const [user, setUser] = useState<any>(null);
@@ -42,13 +43,7 @@ export default function ProfilePage() {
 
       setUser(currentUser);
 
-      // Load profile data
-      const { data: profileData } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('user_id', currentUser.id)
-        .single();
-
+      const profileData = await ensureProfile(supabase, currentUser);
       setProfile(profileData);
     } catch (error) {
       console.error('Error loading profile:', error);

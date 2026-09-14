@@ -149,4 +149,4 @@ export interface ViewRoute {
 }
 
 /** Where the store's data currently comes from. */
-export type DataMode = 'demo' | 'supabase' | 'supabase-pending-migration';
+export type DataMode = 'demo' | 'supabase' | 'supabase-pending-migration' | 'supabase-error';

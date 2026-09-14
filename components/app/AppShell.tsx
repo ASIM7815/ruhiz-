@@ -106,6 +106,41 @@ function ShellInner() {
     );
   }
 
+  if (store.authError) {
+    const signOut = async () => {
+      try {
+        const { createClient } = await import('@/lib/supabase/client');
+        await createClient().auth.signOut();
+      } finally {
+        window.location.href = '/login';
+      }
+    };
+
+    return (
+      <div className="min-h-screen bg-[var(--bg)] flex items-center justify-center px-4">
+        <div className="w-full max-w-xl text-center">
+          <Image src="/images/ruhizlogo-.png" alt="Ruhiz" width={160} height={48} className="h-12 w-auto mx-auto mb-6" priority />
+          <h1 className="text-2xl sm:text-3xl font-semibold text-[var(--text)] mb-3">Live Ruhiz feed unavailable</h1>
+          <p className="text-sm sm:text-base text-[var(--muted)] mb-6">{store.authError}</p>
+          <div className="flex flex-col sm:flex-row gap-3 justify-center">
+            <button
+              onClick={() => window.location.reload()}
+              className="px-5 py-2.5 rounded-xl bg-[var(--brand)] text-white text-sm font-semibold hover:bg-[var(--brand-dark)]"
+            >
+              Retry
+            </button>
+            <button
+              onClick={signOut}
+              className="px-5 py-2.5 rounded-xl border border-[var(--border)] text-sm font-semibold text-[var(--text)] hover:bg-[var(--card-2)]"
+            >
+              Back to login
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const showRightPanel = route.view === 'home';
 
   return (

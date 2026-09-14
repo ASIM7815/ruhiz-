@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { ensureProfile } from '@/lib/backend/api';
 
 export default function EmailVerifiedPage() {
   const [status, setStatus] = useState<'verifying' | 'success' | 'error'>('verifying');
@@ -44,55 +45,20 @@ export default function EmailVerifiedPage() {
         // Wait 1.5 seconds to show success message
         await new Promise(resolve => setTimeout(resolve, 1500));
 
-        // Check if user has a Ruhiz profile
-        console.log('[Auth Verified] Checking for profile...')
-        const { data: profile, error: profileError } = await supabase
-          .from('profiles')
-          .select('username, display_name')
-          .eq('user_id', user.id)
-          .single();
-
-        if (profileError && profileError.code === 'PGRST116') {
-          // Profile doesn't exist - create it
-          console.log('[Auth Verified] Profile not found, creating...')
-          const username = user.user_metadata?.username || user.email?.split('@')[0] || 'user';
-          
-          const { error: insertError } = await supabase
-            .from('profiles')
-            .insert({
-              user_id: user.id,
-              username: username,
-              display_name: username,
-            });
-
-          if (insertError) {
-            console.error('[Auth Verified] Failed to create profile:', insertError)
-            // Continue anyway - profile can be created on next login
-          } else {
-            console.log('[Auth Verified] Profile created successfully')
-          }
-          
-          router.push('/feed');
-          return;
-        }
-
-        if (profileError) {
-          // Error checking profile - log it but continue
-          console.error('[Auth Verified] Profile check error:', profileError);
-          router.push('/feed');
-          return;
-        }
-
-        console.log('[Auth Verified] Profile found:', profile?.username)
+        // Don't create profile here - let them login first
+        // This ensures the login flow handles profile creation
+        console.log('[Auth Verified] Email verified! Redirecting to login...')
         
-        // Profile exists - redirect to feed
-        router.push('/feed');
-        router.refresh();
+        // Sign out so they have to login with their credentials
+        await supabase.auth.signOut();
+        
+        // Redirect to login with success message
+        router.replace('/login?verified=true');
 
-      } catch (error) {
+      } catch (error: any) {
         console.error('[Auth Verified] Verification error:', error);
         setStatus('error');
-        setErrorMessage('Something went wrong. Please try logging in.');
+        setErrorMessage(error?.message ? `Profile error: ${error.message}` : 'Something went wrong. Please try logging in.');
       }
     };
 
@@ -160,12 +126,19 @@ export default function EmailVerifiedPage() {
             </div>
 
             <h1 className="text-2xl font-bold text-gray-900 mb-3">
-              Email verified successfully!
+              Email confirmed!
             </h1>
             
-            <p className="text-gray-600 mb-4">
-              Your email has been confirmed.
+            <p className="text-gray-600 mb-6">
+              Your email has been verified successfully. Redirecting to login...
             </p>
+
+            <div className="text-sm text-gray-500">
+              <p>If you're not redirected automatically,</p>
+              <Link href="/login" className="text-ruhiz-teal hover:underline font-medium">
+                click here to login
+              </Link>
+            </div>
 
             <p className="text-sm text-gray-500">
               Redirecting you...

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { ensureProfile, isMissingSchema } from '@/lib/backend/api';
 
 export default function SignUpPage() {
   const [showPassword, setShowPassword] = useState(false);
@@ -26,23 +27,23 @@ export default function SignUpPage() {
 
   // Check if username is available
   const checkUsernameAvailability = async (username: string): Promise<boolean> => {
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('username')
-        .ilike('username', username)
-        .single();
+    const { data: available, error: rpcError } = await supabase
+      .rpc('is_username_available', { p_username: username });
 
-      // If error is "no rows", username is available
-      if (error && error.code === 'PGRST116') {
-        return true; // Username is available
-      }
-
-      return !data; // Returns true if username is available
-    } catch (err) {
-      console.error('Username check error:', err);
-      return true; // If table doesn't exist, skip check for now
+    if (!rpcError && typeof available === 'boolean') {
+      return available;
     }
+
+    if (rpcError && !isMissingSchema(rpcError)) throw rpcError;
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('username')
+      .ilike('username', username)
+      .maybeSingle();
+
+    if (error) throw error;
+    return !data;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -89,14 +90,22 @@ export default function SignUpPage() {
     try {
       console.log('[Signup] Starting signup process...')
       
-      // Username uniqueness will be enforced by the database
+      const trimmedUsername = username.trim();
+
+      const usernameAvailable = await checkUsernameAvailability(trimmedUsername);
+      if (!usernameAvailable) {
+        setError('That secret name is already taken. Please choose another.');
+        return;
+      }
+
       // Sign up with Supabase Auth
       const { data, error: signUpError } = await supabase.auth.signUp({
         email: email.trim(),
         password,
         options: {
           data: {
-            username: username.trim(),
+            username: trimmedUsername,
+            display_name: trimmedUsername,
           },
           emailRedirectTo: `${window.location.origin}/auth/callback?next=/auth/verified`,
         },
@@ -150,8 +159,14 @@ export default function SignUpPage() {
           router.push(`/confirm-email?email=${encodeURIComponent(email)}`);
         } else {
           console.log('[Signup] Email already confirmed, redirecting to feed')
-          // Email confirmation is disabled - go straight to feed
-          router.push('/feed');
+          try {
+            await ensureProfile(supabase, data.user);
+          } catch (profileErr: any) {
+            console.error('[Signup] Profile creation failed:', profileErr);
+            setError(profileErr?.message ? `Profile error: ${profileErr.message}` : 'Your account was created, but your Ruhiz profile could not be created.');
+            return;
+          }
+          router.replace('/feed');
         }
       }
     } catch (err: any) {

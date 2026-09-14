@@ -86,6 +86,19 @@ export function mapProfile(row: any, ids: IdMapper): UserProfile {
   };
 }
 
+function normalizeUsername(value: string | null | undefined): string {
+  const cleaned = (value ?? '')
+    .replace(/[^a-zA-Z0-9_]/g, '')
+    .slice(0, 20);
+  return cleaned.length >= 3 ? cleaned : 'member';
+}
+
+function withNumericSuffix(base: string, n: number): string {
+  if (n <= 0) return base;
+  const suffix = String(n);
+  return `${base.slice(0, Math.max(1, 20 - suffix.length))}${suffix}`;
+}
+
 export function mapPost(
   row: any,
   opts: {
@@ -167,11 +180,8 @@ export async function ensureProfile(sb: SupabaseClientLike, user: { id: string; 
   if (error) throw error;
   if (data) return data;
 
-  let base = (user.user_metadata?.username || user.email?.split('@')[0] || 'member')
-    .replace(/[^a-zA-Z0-9_]/g, '')
-    .slice(0, 24) || 'member';
+  const base = normalizeUsername(user.user_metadata?.username || user.email?.split('@')[0] || 'member');
   let candidate = base;
-  let n = 0;
   // uniqueness loop (DB has a unique index on lower(username))
   for (let i = 0; i < 20; i++) {
     const { data: existing } = await sb
@@ -180,8 +190,7 @@ export async function ensureProfile(sb: SupabaseClientLike, user: { id: string; 
       .ilike('username', candidate)
       .maybeSingle();
     if (!existing) break;
-    n += 1;
-    candidate = `${base}${n}`;
+    candidate = withNumericSuffix(base, i + 1);
   }
   const display = user.user_metadata?.display_name || user.user_metadata?.full_name || candidate;
   const { data: created, error: insertErr } = await sb
@@ -203,7 +212,7 @@ export async function loadConversations(sb: SupabaseClientLike, myProfileId: str
     .from('conversation_participants')
     .select('conversation_id, last_read_at, conversations!inner(id, last_message_at, created_at)')
     .eq('user_id', myProfileId)
-    .order('joined_at', { referencedTable: 'conversations', ascending: false });
+    .order('joined_at', { ascending: false });
   if (error) throw error;
   const rows: any[] = mine ?? [];
   if (!rows.length) return [];

@@ -75,9 +75,10 @@ export interface CreatePostInput {
 
 interface StoreShape {
   hydrated: boolean;
-  /** demo = sample data; supabase = live; supabase-pending-migration = run the SQL */
+  /** demo = sample data; supabase = live; pending/error = signed in, but live data did not load */
   dataMode: DataMode;
   demoMode: boolean;
+  authError: string | null;
   authEmail: string | null;
   authUserId: string | null;
   me: UserProfile;
@@ -166,6 +167,29 @@ function defaultState(): PersistedState {
   };
 }
 
+function profileFromAuthUser(user: { id: string; email?: string; user_metadata?: any }): UserProfile {
+  const username = (
+    user.user_metadata?.username ||
+    user.email?.split('@')[0] ||
+    'member'
+  ).replace(/[^a-zA-Z0-9_]/g, '').slice(0, 20) || 'member';
+
+  return {
+    id: ME_ID,
+    username,
+    name: user.user_metadata?.display_name || user.user_metadata?.full_name || username,
+    avatar: null,
+    avatarHue: 152,
+    cover: null,
+    bio: '',
+    location: '',
+    website: '',
+    joined: new Date().toISOString(),
+    verified: false,
+    persona: false,
+  };
+}
+
 function loadPersisted(): PersistedState | null {
   if (typeof window === 'undefined') return null;
   try {
@@ -195,6 +219,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const initial = useMemo(defaultState, []);
   const [hydrated, setHydrated] = useState(false);
   const [dataMode, setDataMode] = useState<DataMode>('demo');
+  const [authError, setAuthError] = useState<string | null>(null);
   const [authEmail, setAuthEmail] = useState<string | null>(null);
   const [authUserId, setAuthUserId] = useState<string | null>(null);
   const [me, setMe] = useState<UserProfile>(initial.me);
@@ -280,28 +305,52 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     // 2) Supabase bootstrap
     if (isSupabaseConfigured && tracker) {
       (async () => {
+        console.log('[Ruhiz] Starting Supabase bootstrap...');
         const sb = safeClient();
+        console.log('[Ruhiz] Got Supabase client:', !!sb);
         if (!sb || cancelled) return;
+        let signedInUser: any = null;
         try {
+          console.log('[Ruhiz] Getting auth session...');
           const { data } = await sb.auth.getSession();
           const user = data?.session?.user;
+          console.log('[Ruhiz] User from session:', user ? { id: user.id, email: user.email } : null);
           if (!user) {
             finishDemo(null);
             return;
           }
+          signedInUser = user;
           setAuthEmail(user.email ?? null);
           setAuthUserId(user.id);
 
+          console.log('[Ruhiz] Ensuring profile exists...');
           const profile = await ensureProfile(sb, user);
+          console.log('[Ruhiz] Profile:', profile ? { id: profile.id, username: profile.username } : null);
           if (cancelled) return;
           profileIdRef.current = profile.id;
           idsRef.current = new IdMapper(profile.id);
 
           await loadProduction(sb, profile, user);
+          console.log('[Ruhiz] Production data loaded successfully!');
         } catch (err: any) {
-          console.warn('[ruhiz] production bootstrap fell back to demo mode:', err?.message ?? err);
+          console.error('[Ruhiz] Production bootstrap failed (raw error):', err);
+          console.error('[Ruhiz] Error type:', typeof err);
+          console.error('[Ruhiz] Error constructor:', err?.constructor?.name);
+          console.error('[Ruhiz] Error string:', String(err));
+          console.error('[Ruhiz] Error JSON:', JSON.stringify(err, null, 2));
+          console.error('[Ruhiz] Error details:', {
+            message: err?.message,
+            code: err?.code,
+            details: err?.details,
+            hint: err?.hint,
+            statusCode: err?.statusCode,
+          });
           const missing = isMissingSchema(err);
-          finishDemo(authEmailRef.current ?? null, missing);
+          if (signedInUser) {
+            finishAuthenticatedError(signedInUser, err, missing);
+          } else {
+            finishDemo(authEmailRef.current ?? null);
+          }
         }
       })();
     } else {
@@ -315,7 +364,33 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     function finishDemo(email: string | null, pending = false) {
       if (cancelled) return;
       setAuthEmail(email);
+      setAuthError(null);
       setDataMode(pending ? 'supabase-pending-migration' : 'demo');
+      tracker?.configure({ enabled: false, meId: ME_ID });
+      setHydrated(true);
+    }
+
+    function finishAuthenticatedError(user: any, err: any, pending = false) {
+      if (cancelled) return;
+      const fallbackMe = profileFromAuthUser(user);
+      const message = err?.message || err?.details || 'Ruhiz could not load your authenticated data.';
+      setAuthEmail(user.email ?? null);
+      setAuthUserId(user.id);
+      setAuthError(
+        pending
+          ? `Ruhiz is signed in, but the Supabase production schema is not ready: ${message}`
+          : `Ruhiz is signed in, but your live profile/feed could not be loaded: ${message}`
+      );
+      setMe(fallbackMe);
+      setUsers({ [ME_ID]: fallbackMe });
+      setPosts([]);
+      setFollowing([]);
+      setFollowers([]);
+      setThreads([]);
+      setNotifications([]);
+      profileIdRef.current = null;
+      idsRef.current = new IdMapper(null);
+      setDataMode(pending ? 'supabase-pending-migration' : 'supabase-error');
       tracker?.configure({ enabled: false, meId: ME_ID });
       setHydrated(true);
     }
@@ -323,9 +398,16 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     async function loadProduction(sb: any, profile: any, user: any) {
       const ids = idsRef.current;
 
+      console.log('[Ruhiz] Loading production data for profile:', profile.id);
+
       // ---- profiles (personas + everybody relevant) ----
+      console.log('[Ruhiz] Fetching all profiles...');
       const { data: profileRows, error: profileErr } = await sb.from('profiles').select('*');
-      if (profileErr) throw profileErr;
+      if (profileErr) {
+        console.error('[Ruhiz] Profile fetch error:', profileErr);
+        throw profileErr;
+      }
+      console.log('[Ruhiz] Loaded', profileRows?.length || 0, 'profiles');
 
       const usersMap: Record<string, UserProfile> = { ...SAMPLE_USERS };
       for (const row of profileRows ?? []) {
@@ -337,13 +419,18 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       usersMap[ME_APP_ID_CONST] = meProfile;
 
       // ---- posts + related ----
+      console.log('[Ruhiz] Fetching posts...');
       const { data: postRows, error: postErr } = await sb
         .from('posts')
         .select('*')
         .eq('status', 'live')
         .order('created_at', { ascending: false })
         .limit(300);
-      if (postErr) throw postErr;
+      if (postErr) {
+        console.error('[Ruhiz] Posts fetch error:', postErr);
+        throw postErr;
+      }
+      console.log('[Ruhiz] Loaded', postRows?.length || 0, 'posts');
       const postIds = (postRows ?? []).map((p: any) => p.id as string);
 
       const [problemRows, supportRows, saveRows, beenRows, commentRows, supporterRows] = (await Promise.all([
@@ -428,6 +515,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       setThreads(mappedThreads);
       setNotifications(mappedNotifications);
       setMe(meProfile);
+      setAuthError(null);
       tracker!.configure({
         enabled: true,
         meId: ME_APP_ID_CONST,
@@ -605,6 +693,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           setUsers(SAMPLE_USERS);
           setAuthEmail(null);
           setAuthUserId(null);
+          setAuthError(null);
           setDataMode('demo');
           tracker?.configure({ enabled: false, meId: ME_ID });
         }
@@ -630,7 +719,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   /* --------------------------- persistence -------------------------- */
   useEffect(() => {
-    if (!hydrated || dataMode === 'supabase') return;
+    if (!hydrated || dataMode !== 'demo') return;
     try {
       const payload: PersistedState & { v: number } = {
         v: 2,
@@ -694,6 +783,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   /* ------------------------------ posts ------------------------------ */
   const createPost = useCallback(
     async (input: CreatePostInput): Promise<Post> => {
+      if (modeRef.current !== 'supabase' && modeRef.current !== 'demo') {
+        toast('Live Ruhiz data is unavailable. Please retry after the database issue is fixed.', 'error');
+        throw new Error('Live Ruhiz data is unavailable');
+      }
+
       const problems = classifyPost(input.text, input.topics);
       const optimistic: Post = {
         id: uid('local-'),
@@ -720,6 +814,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       if (modeRef.current === 'supabase') {
         const sb = safeClient();
         const profileId = profileIdRef.current;
+        if (!sb || !profileId) {
+          setPosts((prev) => prev.filter((p) => p.id !== optimistic.id));
+          toast('Your Ruhiz session is missing a live profile. Please log in again.', 'error');
+          throw new Error('Missing live Ruhiz profile');
+        }
         if (sb && profileId) {
           const { data, error } = await sb
             .from('posts')
@@ -749,12 +848,14 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             setPosts((prev) => prev.map((p) => (p.id === optimistic.id ? real : p)));
             return real;
           }
-          console.warn('[ruhiz] post insert failed:', error?.message);
+          setPosts((prev) => prev.filter((p) => p.id !== optimistic.id));
+          toast('Post failed to save to Ruhiz. Please try again.', 'error');
+          throw error ?? new Error('Post insert failed');
         }
       }
       return optimistic;
     },
-    []
+    [toast]
   );
 
   const updatePost = useCallback(async (id: string, patch: Partial<Pick<Post, 'text' | 'topics'>>) => {
@@ -1332,7 +1433,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const value: StoreShape = {
     hydrated,
     dataMode,
-    demoMode: dataMode !== 'supabase',
+    demoMode: dataMode === 'demo',
+    authError,
     authEmail,
     authUserId,
     me,

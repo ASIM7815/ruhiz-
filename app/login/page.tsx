@@ -2,9 +2,10 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { ensureProfile } from '@/lib/backend/api';
 
 export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
@@ -12,8 +13,19 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
   const router = useRouter();
+  const searchParams = useSearchParams();
   const supabase = createClient();
+
+  // Check if coming from email verification
+  useEffect(() => {
+    if (searchParams?.get('verified') === 'true') {
+      setSuccessMessage('✅ Email confirmed! You can now log in with your credentials.');
+      // Clear the message after 6 seconds
+      setTimeout(() => setSuccessMessage(''), 6000);
+    }
+  }, [searchParams]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -59,54 +71,26 @@ export default function LoginPage() {
           userId: data.user.id,
           email: data.user.email,
         })
-        
-        // Try to check if user has a profile
+
+        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+        const sessionUser = sessionData.session?.user;
+        if (sessionError || !sessionUser) {
+          console.error('[Login] Session check failed:', sessionError);
+          setError('Signed in, but Ruhiz could not read your session. Please try again.');
+          return;
+        }
+
         try {
-          console.log('[Login] Checking for profile...')
-          const { data: profile, error: profileError } = await supabase
-            .from('profiles')
-            .select('username')
-            .eq('user_id', data.user.id)
-            .single();
-
-          if (profileError && profileError.code !== 'PGRST116') {
-            // Table might not exist or other error - log and continue
-            console.error('[Login] Profile check error:', profileError);
-          }
-
-          if (!profile) {
-            // Create profile on first login
-            console.log('[Login] Profile not found, creating...')
-            const username = data.user.user_metadata?.username || data.user.email?.split('@')[0] || 'user';
-            
-            const { error: insertError } = await supabase
-              .from('profiles')
-              .insert({
-                user_id: data.user.id,
-                username: username,
-                display_name: username,
-              });
-              
-            if (insertError) {
-              console.error('[Login] Failed to create profile:', {
-                message: insertError.message,
-                code: insertError.code,
-                details: insertError.details,
-              })
-            } else {
-              console.log('[Login] Profile created successfully')
-            }
-          } else {
-            console.log('[Login] Profile found:', profile.username)
-          }
-        } catch (profileErr) {
+          const profile = await ensureProfile(supabase, sessionUser);
+          console.log('[Login] Profile ready:', profile.username);
+        } catch (profileErr: any) {
           console.error('[Login] Profile check failed:', profileErr);
-          // Continue to feed anyway
+          setError(profileErr?.message ? `Profile error: ${profileErr.message}` : 'Signed in, but your Ruhiz profile could not be loaded.');
+          return;
         }
 
         console.log('[Login] Redirecting to /feed')
-        // Profile exists or created - redirect to feed
-        router.push('/feed');
+        router.replace('/feed');
         router.refresh();
       }
     } catch (err: any) {
@@ -193,6 +177,16 @@ export default function LoginPage() {
 
             {/* Login Form */}
             <form onSubmit={handleSubmit} className="space-y-5">
+              {/* Success Message */}
+              {successMessage && (
+                <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-2xl text-sm flex items-start gap-2">
+                  <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                  </svg>
+                  <span>{successMessage}</span>
+                </div>
+              )}
+              
               {/* Error Message */}
               {error && (
                 <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-2xl text-sm">
@@ -226,7 +220,7 @@ export default function LoginPage() {
                 </div>
                 <input
                   type={showPassword ? 'text' : 'password'}
-                  placeholder="Password"
+                  placeholder="Password (Ruhiz password, not email password)"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="w-full pl-12 pr-12 py-4 border border-gray-300 rounded-2xl focus:outline-none focus:ring-2 focus:ring-ruhiz-teal focus:border-transparent text-gray-900 placeholder:text-gray-400"
@@ -248,6 +242,9 @@ export default function LoginPage() {
                   )}
                 </button>
               </div>
+              <p className="text-xs text-gray-500 -mt-2">
+                * Use the password you created for Ruhiz, not your email password.
+              </p>
 
               {/* Forgot Password */}
               <div className="text-right">

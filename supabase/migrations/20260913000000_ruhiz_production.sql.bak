@@ -106,10 +106,6 @@ create table if not exists public.profiles (
   updated_at   timestamptz not null default now()
 );
 
-alter table public.profiles add column if not exists user_id      uuid references auth.users(id) on delete cascade;
-alter table public.profiles add column if not exists username     text;
-alter table public.profiles add column if not exists display_name text;
-alter table public.profiles add column if not exists avatar_url   text;
 alter table public.profiles add column if not exists cover_url    text;
 alter table public.profiles add column if not exists avatar_hue   int not null default 152;
 alter table public.profiles add column if not exists bio          text not null default '';
@@ -119,33 +115,7 @@ alter table public.profiles add column if not exists verified     boolean not nu
 alter table public.profiles add column if not exists is_persona   boolean not null default false;
 alter table public.profiles add column if not exists settings     jsonb not null default '{}'::jsonb;
 alter table public.profiles add column if not exists last_seen_at timestamptz;
-alter table public.profiles add column if not exists created_at   timestamptz not null default now();
 alter table public.profiles add column if not exists updated_at   timestamptz not null default now();
-
--- If an older Supabase starter schema used profiles.id directly as auth.users.id,
--- preserve that account link in the new user_id column.
-update public.profiles p
-set user_id = p.id
-where p.user_id is null
-  and exists (select 1 from auth.users u where u.id = p.id);
-
-update public.profiles
-set username = coalesce(
-  nullif(regexp_replace(username, '[^a-zA-Z0-9_]', '', 'g'), ''),
-  'member_' || left(id::text, 8)
-)
-where username is null or username !~ '^[a-zA-Z0-9_]+$';
-
-update public.profiles
-set display_name = coalesce(nullif(display_name, ''), username)
-where display_name is null or display_name = '';
-
-do $$ begin
-  alter table public.profiles alter column username set not null;
-  alter table public.profiles alter column display_name set not null;
-exception when others then
-  raise notice 'profiles username/display_name still contain nulls: %', sqlerrm;
-end $$;
 
 -- legacy schema had NOT NULL on user_id; personas need it nullable
 do $$ begin
@@ -159,11 +129,7 @@ do $$ begin
 end $$;
 
 create unique index if not exists profiles_user_id_unique on public.profiles(user_id) where user_id is not null;
-do $$ begin
-  execute 'create unique index if not exists profiles_username_lower_unique on public.profiles(lower(username))';
-exception when unique_violation then
-  raise notice 'profiles username lower-case uniqueness needs manual duplicate cleanup: %', sqlerrm;
-end $$;
+create unique index if not exists profiles_username_key   on public.profiles(lower(username));
 create index if not exists idx_profiles_persona on public.profiles(is_persona) where is_persona;
 
 -- drop legacy username check constraints if present (they can block seeds)
@@ -172,12 +138,8 @@ do $$ begin
   alter table public.profiles drop constraint if exists username_format;
 exception when others then null; end $$;
 
--- add username shape constraint (idempotent)
-do $$ begin
-  alter table public.profiles add constraint profiles_username_shape
-    check (char_length(username) between 2 and 30 and username ~ '^[a-zA-Z0-9_]+$') not valid;
-exception when duplicate_object then null; end $$;
-
+alter table public.profiles add constraint profiles_username_shape
+  check (char_length(username) between 2 and 30 and username ~ '^[a-zA-Z0-9_]+$') not valid;
 -- validate best-effort (existing rows may need manual fixes)
 do $$ begin
   alter table public.profiles validate constraint profiles_username_shape;
@@ -193,21 +155,6 @@ language sql stable security definer set search_path = public
 as $$
   select id from public.profiles where user_id = auth.uid() limit 1;
 $$;
-
-create or replace function public.is_username_available(p_username text)
-returns boolean
-language sql stable security definer set search_path = public
-as $$
-  select p_username ~ '^[a-zA-Z0-9_]{3,20}$'
-    and not exists (
-      select 1
-      from public.profiles p
-      where lower(p.username) = lower(p_username)
-    );
-$$;
-
-revoke all on function public.is_username_available(text) from public;
-grant execute on function public.is_username_available(text) to anon, authenticated;
 
 create or replace function public.handle_updated_at()
 returns trigger language plpgsql as $$
@@ -367,7 +314,7 @@ begin
 
   -- top 4 by (score desc, id asc), normalised to shares
   with entries as (
-    select e.k, e.v::float8 as v from jsonb_each_text(v_result) as e(k, v)
+    select k, v::float8 as v from jsonb_each_text(v_result)
   ), ranked as (
     select k, v, row_number() over (order by v desc, k asc) rn,
            sum(v) over () s
@@ -543,10 +490,6 @@ begin
 
     if v_action is null then continue; end if;
 
-    if v_post is not null and not exists (select 1 from public.posts where id = v_post) then
-      raise exception 'POST_NOT_FOUND';
-    end if;
-
     -- 1) store the raw activity (views deduped per post)
     if v_action = 'view' and v_post is not null then
       insert into public.activities (user_id, post_id, action, query, meta)
@@ -713,11 +656,8 @@ create table if not exists public.conversations (
   id              uuid primary key default gen_random_uuid(),
   created_by      uuid not null references public.profiles(id) on delete cascade,
   last_message_at timestamptz,
-  created_at      timestamptz not null default now(),
-  updated_at      timestamptz not null default now()
+  created_at      timestamptz not null default now()
 );
-
-alter table public.conversations add column if not exists updated_at timestamptz not null default now();
 
 create table if not exists public.conversation_participants (
   conversation_id uuid not null references public.conversations(id) on delete cascade,
@@ -726,8 +666,6 @@ create table if not exists public.conversation_participants (
   joined_at       timestamptz not null default now(),
   primary key (conversation_id, user_id)
 );
-alter table public.conversation_participants
-  add column if not exists joined_at timestamptz not null default now();
 create index if not exists idx_participants_user on public.conversation_participants (user_id);
 
 create table if not exists public.messages (
@@ -1120,10 +1058,7 @@ create policy ups_select on public.user_problem_scores
 -- supporters: visible, owned writes
 drop policy if exists supporters_select on public.supporters;
 create policy supporters_select on public.supporters
-  for select to authenticated using (
-    supporter_id = public.current_profile_id()
-    or supported_id = public.current_profile_id()
-  );
+  for select to authenticated using (true);
 drop policy if exists supporters_insert on public.supporters;
 create policy supporters_insert on public.supporters
   for insert to authenticated with check (supporter_id = public.current_profile_id());
@@ -1301,46 +1236,52 @@ insert into public.posts (id, user_id, type, content, image_url, video_url, topi
                           created_at) values
   ('b0000000-0000-4000-8000-000000000001', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a03', 'photo',
    E'Sometimes a peaceful evening is all you need. Took this on my walk home and remembered why I started carrying a camera everywhere. 💚',
-   '/images/ruhizhero.png', null, '{Life,Gratitude}', 124, 0, 12, 18, 18, 640, now() - interval '2 hours'),
+   '/images/ruhizhero.png', null, '{Life,Gratitude}', 124, 0, 12, 18, 18, 640, 640, now() - interval '2 hours'),
   ('b0000000-0000-4000-8000-000000000002', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a01', 'moment',
    E'A gentle reminder from my therapy notebook:\n\n“You don''t have to earn rest. Rest is not a reward for finishing everything — it''s part of how you keep going.”\n\nIf your to-do list is unfinished tonight, this is your permission slip to rest anyway. 🌙',
-   null, null, '{Mental Health,Self Improvement}', 482, 0, 96, 132, 231, 2100, now() - interval '5 hours'),
+   null, null, '{Mental Health,Self Improvement}', 482, 0, 96, 132, 231, 2100, 2100, now() - interval '5 hours'),
   ('b0000000-0000-4000-8000-000000000003', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a08', 'video',
    E'Mile 742 of my recovery run. Some mornings the hardest rep is just putting on the shoes. If you''re fighting something quietly today — keep going. 🏃‍♂️',
-   null, 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', '{Recovery,Fitness}', 356, 0, 44, 61, 149, 1750, now() - interval '9 hours'),
+   null, 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4', '{Recovery,Fitness}', 356, 0, 44, 61, 149, 1750, 1750, now() - interval '9 hours'),
   ('b0000000-0000-4000-8000-000000000004', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a02', 'moment',
    E'Failed my mock exam today. Old me would have spiraled for a week. New me made tea, texted a friend, and booked a study session for tomorrow.\n\nHealing isn''t never falling. It''s falling differently. ☕',
-   null, null, '{Studying,Mental Health}', 208, 0, 17, 42, 87, 980, now() - interval '14 hours'),
+   null, null, '{Studying,Mental Health}', 208, 0, 17, 42, 87, 980, 980, now() - interval '14 hours'),
   ('b0000000-0000-4000-8000-000000000005', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a05', 'photo',
    E'Golden hour at the studio. We practiced letting go of “doing it perfectly” today — just breathing and being. Somebody laughed mid-pose and it was the best sound. ✨',
-   '/images/FOOTER.png', null, '{Life,Gratitude}', 173, 0, 9, 55, 41, 760, now() - interval '29 hours'),
+   '/images/FOOTER.png', null, '{Life,Gratitude}', 173, 0, 9, 55, 41, 760, 760, now() - interval '29 hours'),
   ('b0000000-0000-4000-8000-000000000006', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a04', 'moment',
    E'Six months ago I quit a job I''d had for eight years. Everyone said I was making a mistake.\n\nToday I finished my first week at a job that doesn''t make me cry in the parking lot.\n\nStart over if you need to. It''s not quitting — it''s choosing yourself.',
-   null, null, '{Career,Mental Health}', 641, 0, 120, 148, 302, 3100, now() - interval '38 hours'),
+   null, null, '{Career,Mental Health}', 641, 0, 120, 148, 302, 3100, 3100, now() - interval '38 hours'),
   ('b0000000-0000-4000-8000-000000000007', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a07', 'photo',
    E'My 4am study desk 📚 Anatomy flashcards, one lamp, and a promise to future-me. Exams are scary, but small consistent nights add up.',
-   '/images/login-side-image.png', null, '{Studying,Life}', 96, 0, 6, 28, 22, 430, now() - interval '50 hours'),
-  -- VIDEO POST REMOVED: ('b0000000-0000-4000-8000-000000000008', dad song video)
+   '/images/login-side-image.png', null, '{Studying,Life}', 96, 0, 6, 28, 22, 430, 430, now() - interval '50 hours'),
+  ('b0000000-0000-4000-8000-000000000008', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a06', 'video',
+   E'Wrote this song the night after my dad told me he was proud of me. Haven''t played it for anyone until now. Be gentle, it''s a fragile one. 🎸',
+   null, 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4', '{Creativity,Relationships}', 289, 0, 31, 66, 74, 1200, 1200, now() - interval '62 hours'),
   ('b0000000-0000-4000-8000-000000000009', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a09', 'moment',
    E'Long distance tip nobody tells you: schedule the boring calls too. The ones where you both just do dishes on video and barely talk. Presence doesn''t always need performance. 💌',
-   null, null, '{Relationships}', 154, 0, 28, 37, 33, 680, now() - interval '77 hours'),
+   null, null, '{Relationships}', 154, 0, 28, 37, 33, 680, 680, now() - interval '77 hours'),
   ('b0000000-0000-4000-8000-000000000010', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a0a', 'moment',
    E'Night shift honesty: I held a patient''s hand at 3am tonight and it was the most human moment of my week.\n\nTo everyone working while the world sleeps — your quiet hours matter.',
-   null, null, '{Life,Gratitude}', 412, 0, 58, 96, 118, 1900, now() - interval '91 hours'),
-  ('b0000000-0000-4000-8000-000000000011', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a05', 'moment',
+   null, null, '{Life,Gratitude}', 412, 0, 58, 96, 118, 1900, 1900, now() - interval '91 hours'),
+  ('b0000000-0000-4000-8000-000000000011', null, 'moment',
    E'Small win: I said no to plans tonight without inventing an excuse. Just “I need to rest.” Nobody died. The world kept turning. Growth looks like this sometimes. 🌱',
-   null, null, '{Mental Health,Self Improvement}', 64, 0, 4, 15, 21, 260, now() - interval '12 hours'),
-  ('b0000000-0000-4000-8000-000000000012', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a05', 'photo',
+   null, null, '{Mental Health,Self Improvement}', 64, 0, 4, 15, 21, 260, 260, now() - interval '12 hours'),
+  ('b0000000-0000-4000-8000-000000000012', null, 'photo',
    E'Sunday reset: journal, tea, and the view from my window. Nothing productive happened and it was perfect. ☕',
-   '/images/banner.png', null, '{Life,Gratitude}', 87, 0, 3, 19, 12, 300, now() - interval '101 hours'),
-  -- VIDEO POST REMOVED: ('b0000000-0000-4000-8000-000000000013', morning vlog video)
+   '/images/banner.png', null, '{Life,Gratitude}', 87, 0, 3, 19, 12, 300, 300, now() - interval '101 hours'),
+  ('b0000000-0000-4000-8000-000000000013', null, 'video',
+   E'First time trying to vlog my morning routine instead of doomscrolling. It''s messy and unedited, like me. Trying a 7-day streak — day 1 ✅',
+   null, 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4', '{Life,Self Improvement}', 45, 0, 2, 8, 8, 150, 150, now() - interval '144 hours'),
   ('b0000000-0000-4000-8000-000000000014', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a05', 'question',
    E'Genuine question for the community: what''s one tiny habit that quietly improved your mental health? Not big breakthroughs — tiny ones. I''ll start: making my bed every morning.',
-   null, null, '{Mental Health}', 198, 0, 15, 44, 55, 1100, now() - interval '115 hours'),
+   null, null, '{Mental Health}', 198, 0, 15, 44, 55, 1100, 1100, now() - interval '115 hours'),
   ('b0000000-0000-4000-8000-000000000015', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a03', 'photo',
    E'Shot this at dawn before the city woke up. Quiet places heal me. Where''s your quiet place?',
-   '/images/ruhiz.png', null, '{Life,Creativity}', 231, 0, 19, 58, 37, 900, now() - interval '132 hours')
-  -- VIDEO POST REMOVED: ('b0000000-0000-4000-8000-000000000016', grounding technique video)
+   '/images/ruhiz.png', null, '{Life,Creativity}', 231, 0, 19, 58, 37, 900, 900, now() - interval '132 hours'),
+  ('b0000000-0000-4000-8000-000000000016', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a01', 'video',
+   E'60-second grounding technique for anxious moments: 5 things you can see, 4 you can touch, 3 you can hear, 2 you can smell, 1 you can taste. Save this for the days you need it. 💚',
+   null, 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4', '{Mental Health,Self Improvement}', 720, 0, 240, 254, 384, 4200, 4200, now() - interval '168 hours')
 on conflict (id) do nothing;
 
 -- attribute the three "own journey" posts to the real demo account if it exists
