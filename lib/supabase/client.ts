@@ -1,6 +1,8 @@
 import { createBrowserClient } from '@supabase/ssr'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+let browserClient: SupabaseClient | null = null
+
 export function isSupabaseConfigured() {
   return Boolean(
     process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -63,17 +65,27 @@ function createStubClient(): BrowserClient {
 
 export function createClient(): BrowserClient {
   if (!isSupabaseConfigured()) return createStubClient()
-  return createBrowserClient(
+  
+  // Return singleton instance
+  if (browserClient) return browserClient
+  
+  browserClient = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   )
+  return browserClient
 }
 
 /** Returns a real client only when Supabase env vars exist, otherwise null. */
 export function safeClient() {
   if (!isSupabaseConfigured()) return null
-  return createBrowserClient(
+  
+  // Return singleton instance
+  if (browserClient) return browserClient
+  
+  browserClient = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   )
+  return browserClient
 }

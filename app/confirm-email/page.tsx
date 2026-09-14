@@ -22,16 +22,18 @@ function ConfirmEmailContent() {
         type: 'signup',
         email: email,
         options: {
-          emailRedirectTo: `${window.location.origin}/auth/verified`,
+          emailRedirectTo: `${window.location.origin}/auth/callback?next=/auth/verified`,
         },
       });
 
       if (error) {
+        console.error('Resend error:', error);
         setResendMessage('Failed to resend email. Please try again.');
       } else {
         setResendMessage('Verification email sent! Check your inbox.');
       }
     } catch (err) {
+      console.error('Resend exception:', err);
       setResendMessage('Something went wrong. Please try again.');
     } finally {
       setResending(false);

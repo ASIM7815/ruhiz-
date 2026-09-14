@@ -87,14 +87,9 @@ export default function SignUpPage() {
     }
 
     try {
-      // Check username availability
-      const isUsernameAvailable = await checkUsernameAvailability(username);
-      if (!isUsernameAvailable) {
-        setError('That secret name is already taken');
-        setLoading(false);
-        return;
-      }
-
+      console.log('[Signup] Starting signup process...')
+      
+      // Username uniqueness will be enforced by the database
       // Sign up with Supabase Auth
       const { data, error: signUpError } = await supabase.auth.signUp({
         email: email.trim(),
@@ -103,58 +98,74 @@ export default function SignUpPage() {
           data: {
             username: username.trim(),
           },
-          emailRedirectTo: `${window.location.origin}/auth/verified`,
+          emailRedirectTo: `${window.location.origin}/auth/callback?next=/auth/verified`,
         },
       });
 
       if (signUpError) {
+        console.error('[Signup] Sign up error (full):', signUpError)
+        console.error('[Signup] Sign up error details:', {
+          message: signUpError.message,
+          status: signUpError.status,
+          name: signUpError.name,
+          cause: signUpError.cause,
+        })
+        
         // User-friendly error messages
-        if (signUpError.message.includes('already registered')) {
+        if (signUpError.message?.includes('already registered')) {
           setError('An account with this email already exists. Try logging in.');
-        } else if (signUpError.message.includes('Password')) {
+        } else if (signUpError.message?.includes('Password')) {
           setError('Your password must be at least 8 characters');
-        } else if (signUpError.message.includes('rate limit') || signUpError.status === 429) {
+        } else if (signUpError.message?.includes('rate limit') || signUpError.status === 429) {
           setError('Too many attempts from this email. Please try again later (wait 1 hour).');
+        } else if (signUpError.message?.includes('sending confirmation email') || signUpError.message?.includes('email')) {
+          setError('Email service not configured. Please ask admin to set up Resend SMTP in Supabase, or disable email confirmation for testing.');
+        } else if (signUpError.message) {
+          setError(`Error: ${signUpError.message}`);
         } else {
-          setError('Something went wrong. Please try again.');
+          setError('Something went wrong. Please check your Supabase configuration and try again.');
         }
         return;
       }
 
       if (data.user) {
+        console.log('[Signup] User created:', {
+          userId: data.user.id,
+          email: data.user.email,
+          emailConfirmed: data.user.email_confirmed_at,
+          needsConfirmation: !data.user.email_confirmed_at
+        });
+        
         // Check if email confirmation is required
         if (data.user.identities && data.user.identities.length === 0) {
           setError('An account with this email already exists. Try logging in.');
           return;
         }
 
-        // Try to create profile - but don't block signup if it fails
-        try {
-          const { error: profileError } = await supabase
-            .from('profiles')
-            .insert({
-              user_id: data.user.id,
-              username: username.trim(),
-              display_name: username.trim(),
-              created_at: new Date().toISOString(),
-            });
-
-          if (profileError) {
-            console.error('Profile creation error:', profileError);
-            // Profile will be created later in setup-profile page
-          }
-        } catch (profileErr) {
-          console.error('Profile creation failed:', profileErr);
-          // Continue anyway - profile can be created later
+        // Skip profile creation - will be created when user first logs in
+        // Check if email confirmation is needed
+        if (!data.user.email_confirmed_at) {
+          console.log('[Signup] Redirecting to confirm-email page')
+          // Redirect to email confirmation page
+          router.push(`/confirm-email?email=${encodeURIComponent(email)}`);
+        } else {
+          console.log('[Signup] Email already confirmed, redirecting to feed')
+          // Email confirmation is disabled - go straight to feed
+          router.push('/feed');
         }
-
-        // Always redirect to email confirmation
-        router.push(`/confirm-email?email=${encodeURIComponent(email)}`);
       }
     } catch (err: any) {
-      console.error('Signup error:', err);
+      console.error('[Signup] Exception:', err);
+      console.error('[Signup] Error details:', {
+        message: err.message,
+        status: err.status,
+        statusText: err.statusText,
+      });
+      
       if (err.message?.includes('relation "profiles" does not exist')) {
         setError('Database not set up. Please contact support.');
+      } else if (err.message) {
+        setError(`Error: ${err.message}`);
       } else {
         setError('Something went wrong. Please check your connection and try again.');
       }

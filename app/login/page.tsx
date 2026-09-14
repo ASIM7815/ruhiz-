@@ -28,12 +28,19 @@ export default function LoginPage() {
     }
 
     try {
+      console.log('[Login] Attempting sign in...')
+      
       const { data, error: signInError } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password,
       });
 
       if (signInError) {
+        console.error('[Login] Sign in error:', {
+          message: signInError.message,
+          status: signInError.status,
+        })
+        
         // User-friendly error messages
         if (signInError.message.includes('Invalid login credentials')) {
           setError('Email or password is incorrect.');
@@ -48,8 +55,14 @@ export default function LoginPage() {
       }
 
       if (data.user) {
+        console.log('[Login] Sign in successful:', {
+          userId: data.user.id,
+          email: data.user.email,
+        })
+        
         // Try to check if user has a profile
         try {
+          console.log('[Login] Checking for profile...')
           const { data: profile, error: profileError } = await supabase
             .from('profiles')
             .select('username')
@@ -57,25 +70,47 @@ export default function LoginPage() {
             .single();
 
           if (profileError && profileError.code !== 'PGRST116') {
-            // Table might not exist - just go to feed
-            console.error('Profile check error:', profileError);
+            // Table might not exist or other error - log and continue
+            console.error('[Login] Profile check error:', profileError);
           }
 
           if (!profile) {
-            // User exists but profile doesn't - redirect to profile setup
-            router.push('/setup-profile');
-            return;
+            // Create profile on first login
+            console.log('[Login] Profile not found, creating...')
+            const username = data.user.user_metadata?.username || data.user.email?.split('@')[0] || 'user';
+            
+            const { error: insertError } = await supabase
+              .from('profiles')
+              .insert({
+                user_id: data.user.id,
+                username: username,
+                display_name: username,
+              });
+              
+            if (insertError) {
+              console.error('[Login] Failed to create profile:', {
+                message: insertError.message,
+                code: insertError.code,
+                details: insertError.details,
+              })
+            } else {
+              console.log('[Login] Profile created successfully')
+            }
+          } else {
+            console.log('[Login] Profile found:', profile.username)
           }
         } catch (profileErr) {
-          console.error('Profile check failed:', profileErr);
+          console.error('[Login] Profile check failed:', profileErr);
           // Continue to feed anyway
         }
 
-        // Profile exists - redirect to feed
+        console.log('[Login] Redirecting to /feed')
+        // Profile exists or created - redirect to feed
         router.push('/feed');
         router.refresh();
       }
     } catch (err: any) {
+      console.error('[Login] Exception:', err)
       setError('Something went wrong. Please check your connection and try again.');
     } finally {
       setLoading(false);

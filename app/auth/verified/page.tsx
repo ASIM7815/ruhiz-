@@ -15,17 +15,28 @@ export default function EmailVerifiedPage() {
   useEffect(() => {
     const verifyAndRedirect = async () => {
       try {
+        console.log('[Auth Verified] Starting verification check...')
+        
         // Get the current session after email verification
         const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
+        console.log('[Auth Verified] Session check:', {
+          hasSession: !!session,
+          userId: session?.user?.id,
+          email: session?.user?.email,
+          error: sessionError?.message,
+        })
+
         if (sessionError || !session) {
+          console.error('[Auth Verified] No session found:', sessionError)
           setStatus('error');
-          setErrorMessage('Unable to verify your email. Please try again.');
+          setErrorMessage('Unable to verify your email. Please try logging in.');
           return;
         }
 
         // User is authenticated, email is verified
         const user = session.user;
+        console.log('[Auth Verified] User authenticated:', user.id)
         
         // Show success briefly
         setStatus('success');
@@ -34,6 +45,7 @@ export default function EmailVerifiedPage() {
         await new Promise(resolve => setTimeout(resolve, 1500));
 
         // Check if user has a Ruhiz profile
+        console.log('[Auth Verified] Checking for profile...')
         const { data: profile, error: profileError } = await supabase
           .from('profiles')
           .select('username, display_name')
@@ -41,30 +53,44 @@ export default function EmailVerifiedPage() {
           .single();
 
         if (profileError && profileError.code === 'PGRST116') {
-          // Profile doesn't exist - redirect to profile setup
-          router.push('/setup-profile');
+          // Profile doesn't exist - create it
+          console.log('[Auth Verified] Profile not found, creating...')
+          const username = user.user_metadata?.username || user.email?.split('@')[0] || 'user';
+          
+          const { error: insertError } = await supabase
+            .from('profiles')
+            .insert({
+              user_id: user.id,
+              username: username,
+              display_name: username,
+            });
+
+          if (insertError) {
+            console.error('[Auth Verified] Failed to create profile:', insertError)
+            // Continue anyway - profile can be created on next login
+          } else {
+            console.log('[Auth Verified] Profile created successfully')
+          }
+          
+          router.push('/feed');
           return;
         }
 
         if (profileError) {
-          // Error checking profile, but profile might not exist - go to setup
-          console.error('Profile check error:', profileError);
-          router.push('/setup-profile');
+          // Error checking profile - log it but continue
+          console.error('[Auth Verified] Profile check error:', profileError);
+          router.push('/feed');
           return;
         }
 
-        if (!profile || !profile.username) {
-          // Profile exists but incomplete - redirect to profile setup
-          router.push('/setup-profile');
-          return;
-        }
-
-        // Profile exists and is complete - redirect to feed
+        console.log('[Auth Verified] Profile found:', profile?.username)
+        
+        // Profile exists - redirect to feed
         router.push('/feed');
         router.refresh();
 
       } catch (error) {
-        console.error('Verification error:', error);
+        console.error('[Auth Verified] Verification error:', error);
         setStatus('error');
         setErrorMessage('Something went wrong. Please try logging in.');
       }

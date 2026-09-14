@@ -48,7 +48,7 @@ export default function TopBar() {
       <div className="h-full px-4 md:px-6 flex items-center gap-3">
         {/* Logo */}
         <button onClick={() => navigate('home')} className="flex items-center gap-2 flex-shrink-0" aria-label="Ruhiz home">
-          <Image src="/images/ruhizlogo-.png" alt="Ruhiz" width={96} height={30} className="h-7 w-auto brightness-0 invert" priority />
+          <Image src="/images/ruhizlogo-.png" alt="Ruhiz" width={140} height={44} className="h-11 w-auto brightness-0 invert" priority />
         </button>
 
         {/* Search (desktop) */}
