@@ -20,7 +20,7 @@ export default function FinalCTA() {
         </p>
         
         <Link
-          href="/join"
+          href="/login"
           className="inline-flex items-center gap-2 px-10 py-5 bg-white text-ruhiz-teal font-semibold rounded-full hover:shadow-2xl transition-all text-lg"
         >
           Join Ruhiz Today
