@@ -82,7 +82,7 @@ function TypePicker({ onPick }: { onPick: (t: 'photo' | 'video' | 'moment') => v
         <div>
           <h4 className="font-semibold text-sm text-[var(--text)]">Safe Space Reminder</h4>
           <p className="text-xs text-[var(--muted)] leading-relaxed mt-0.5">
-            Share authentically — your mental health matters. Uploads go to Cloudflare R2 once connected, and posts sync to your Supabase feed.
+            Share authentically — your mental health matters. Your posts are private to the Ruhiz community only.
           </p>
         </div>
       </div>
@@ -144,11 +144,9 @@ function Composer({
     setProgress(5);
     try {
       let mediaKey: string | undefined;
-      let storage = 'local';
       if (file) {
         const res = await uploadMedia(file, type === 'video' ? 'post-video' : 'post-image', setProgress);
         mediaKey = res.key;
-        storage = res.storage;
       }
       setProgress(95);
       await store.createPost({
@@ -161,14 +159,16 @@ function Composer({
       store.toast(
         type === 'moment'
           ? 'Your moment is live ✨'
-          : storage === 'r2'
-          ? 'Uploaded to R2 and posted ✨'
-          : 'Posted! (demo storage — connect R2 for permanent hosting)',
-        storage === 'r2' ? 'success' : 'success'
+          : type === 'photo'
+          ? 'Thank you for sharing ❤️'
+          : 'Love it. Share more ❤️',
+        'success'
       );
       onClose();
-    } catch {
-      store.toast('Something went wrong while posting', 'error');
+    } catch (err) {
+      console.error('[CreatePost] Error:', err);
+      const message = err instanceof Error ? err.message : 'Something went wrong while posting';
+      store.toast(message, 'error');
     } finally {
       setUploading(false);
     }
@@ -301,7 +301,7 @@ function Composer({
         <div className="space-y-1.5">
           <div className="flex items-center gap-2 text-sm text-[var(--muted)]">
             <Spinner size={16} className="text-[var(--brand)]" />
-            {progress < 70 ? 'Uploading to R2…' : 'Publishing your moment…'}
+            {progress < 70 ? 'Uploading…' : 'Publishing your moment…'}
           </div>
           <div className="h-1.5 rounded-full bg-[var(--card-2)] overflow-hidden">
             <div className="h-full bg-[var(--brand)] rounded-full transition-all duration-300" style={{ width: `${progress}%` }} />

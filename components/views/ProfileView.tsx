@@ -66,7 +66,7 @@ export default function ProfileView({ userId, onCreate }: { userId?: string; onC
       const { key, storage } = await uploadMedia(file, cropTarget === 'avatar' ? 'avatar' : 'cover', setProgress);
       if (cropTarget === 'avatar') store.updateProfile({ avatar: key });
       else store.updateProfile({ cover: key });
-      store.toast(storage === 'r2' ? `${cropTarget === 'avatar' ? 'Profile photo' : 'Cover'} updated ✨` : 'Updated! (demo storage)', 'success');
+      store.toast(`${cropTarget === 'avatar' ? 'Profile photo' : 'Cover'} updated ✨`, 'success');
     } catch {
       store.toast('Could not update image', 'error');
     } finally {
@@ -101,7 +101,7 @@ export default function ProfileView({ userId, onCreate }: { userId?: string; onC
     <div className="max-w-[720px] mx-auto">
       <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl overflow-hidden mb-5">
         {/* Cover */}
-        <div className="relative h-40 sm:h-52">
+        <div className="relative h-32 sm:h-40 md:h-52">
           <div className="absolute inset-0" style={coverStyle} />
           <div className="absolute inset-0 bg-gradient-to-t from-black/30 to-transparent" />
           {isOwn && (
@@ -109,45 +109,57 @@ export default function ProfileView({ userId, onCreate }: { userId?: string; onC
               <input ref={coverInput} type="file" accept="image/*" className="hidden" onChange={(e) => onFilePicked(e, 'cover')} />
               <button
                 onClick={() => coverInput.current?.click()}
-                className="absolute bottom-3 right-3 flex items-center gap-2 px-3.5 py-2 rounded-xl bg-black/55 text-white text-xs font-semibold hover:bg-black/75 transition-colors backdrop-blur-sm"
+                className="absolute bottom-2 right-2 sm:bottom-3 sm:right-3 flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl bg-black/55 text-white text-xs font-semibold hover:bg-black/75 transition-colors backdrop-blur-sm"
               >
-                <Icon name="camera" size={15} />
-                {uploadingImage ? 'Uploading…' : 'Edit cover'}
+                <Icon name="camera" size={14} />
+                <span className="hidden xs:inline">{uploadingImage ? 'Uploading…' : 'Edit cover'}</span>
               </button>
             </>
           )}
         </div>
 
         {/* Avatar + header info */}
-        <div className="px-5 sm:px-7 pb-6">
-          <div className="flex items-end justify-between -mt-12 sm:-mt-14 mb-4">
+        <div className="px-3 sm:px-5 md:px-7 pb-4 sm:pb-6">
+          <div className="flex items-end justify-between -mt-10 sm:-mt-12 md:-mt-14 mb-3 sm:mb-4 gap-2">
             <div className="relative">
               <div className="ring-4 ring-[var(--card)] rounded-full">
-                <Avatar user={user} size={104} />
+                <Avatar user={user} size={80} className="sm:hidden" />
+                <Avatar user={user} size={104} className="hidden sm:block" />
               </div>
               {isOwn && (
                 <>
                   <input ref={avatarInput} type="file" accept="image/*" className="hidden" onChange={(e) => onFilePicked(e, 'avatar')} />
                   <button
                     onClick={() => avatarInput.current?.click()}
-                    className="absolute bottom-1 right-1 w-9 h-9 rounded-full bg-[var(--brand)] text-white flex items-center justify-center ring-4 ring-[var(--card)] hover:bg-[var(--brand-dark)] transition-colors"
+                    className="absolute bottom-0 right-0 sm:bottom-1 sm:right-1 w-7 h-7 sm:w-9 sm:h-9 rounded-full bg-[var(--brand)] text-white flex items-center justify-center ring-4 ring-[var(--card)] hover:bg-[var(--brand-dark)] transition-colors"
                     aria-label="Change profile photo"
                   >
-                    <Icon name="camera" size={16} />
+                    <Icon name="camera" size={14} className="sm:hidden" />
+                    <Icon name="camera" size={16} className="hidden sm:block" />
                   </button>
                 </>
               )}
             </div>
 
-            <div className="flex gap-2 pb-1">
+            <div className="flex gap-1.5 sm:gap-2 pb-1 flex-shrink-0">
               {isOwn ? (
                 <>
-                  <GhostButton onClick={shareProfile}>
-                    <Icon name="share" size={15} /> Share
-                  </GhostButton>
-                  <PrimaryButton onClick={() => setEditOpen(true)}>
-                    <Icon name="pen" size={15} /> Edit profile
-                  </PrimaryButton>
+                  <button
+                    onClick={shareProfile}
+                    className="px-2.5 sm:px-4 py-1.5 sm:py-2 rounded-xl border border-[var(--border)] text-xs sm:text-sm font-semibold text-[var(--text)] hover:bg-[var(--card-2)] transition-colors flex items-center gap-1 sm:gap-1.5"
+                  >
+                    <Icon name="share" size={14} className="sm:hidden" />
+                    <Icon name="share" size={15} className="hidden sm:block" />
+                    <span className="hidden xs:inline">Share</span>
+                  </button>
+                  <button
+                    onClick={() => setEditOpen(true)}
+                    className="px-2.5 sm:px-4 py-1.5 sm:py-2 rounded-xl bg-[var(--brand)] text-white text-xs sm:text-sm font-semibold hover:bg-[var(--brand-dark)] transition-colors flex items-center gap-1 sm:gap-1.5"
+                  >
+                    <Icon name="pen" size={14} className="sm:hidden" />
+                    <Icon name="pen" size={15} className="hidden sm:block" />
+                    <span className="hidden xs:inline">Edit</span>
+                  </button>
                 </>
               ) : (
                 <>
@@ -155,7 +167,7 @@ export default function ProfileView({ userId, onCreate }: { userId?: string; onC
                     onClick={() => {
                       void store.openThreadWith(user.id).then((threadId) => navigate('messages', threadId));
                     }}
-                    className="px-4 py-2 rounded-xl border border-[var(--border)] text-sm font-semibold text-[var(--text)] hover:bg-[var(--card-2)] transition-colors"
+                    className="px-2.5 sm:px-4 py-1.5 sm:py-2 rounded-xl border border-[var(--border)] text-xs sm:text-sm font-semibold text-[var(--text)] hover:bg-[var(--card-2)] transition-colors"
                   >
                     Message
                   </button>
@@ -171,26 +183,27 @@ export default function ProfileView({ userId, onCreate }: { userId?: string; onC
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold text-[var(--text)]">{user.name}</h1>
-            {user.verified && <Icon name="badge" size={20} className="text-[var(--brand)]" />}
+          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+            <h1 className="text-xl sm:text-2xl font-bold text-[var(--text)] break-words">{user.name}</h1>
+            {user.verified && <Icon name="badge" size={18} className="sm:hidden flex-shrink-0" />}
+            {user.verified && <Icon name="badge" size={20} className="hidden sm:block flex-shrink-0" />}
             {isOwn && <Badge>Demo account</Badge>}
           </div>
-          <p className="text-sm text-[var(--muted)]">@{user.username}</p>
-          {user.bio && <p className="text-sm text-[var(--text)] mt-3 leading-relaxed max-w-lg whitespace-pre-wrap">{user.bio}</p>}
+          <p className="text-xs sm:text-sm text-[var(--muted)] break-all">@{user.username}</p>
+          {user.bio && <p className="text-xs sm:text-sm text-[var(--text)] mt-2 sm:mt-3 leading-relaxed whitespace-pre-wrap break-words">{user.bio}</p>}
 
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 mt-3 text-sm text-[var(--muted)]">
+          <div className="flex flex-wrap items-center gap-x-3 sm:gap-x-5 gap-y-1.5 mt-2 sm:mt-3 text-xs sm:text-sm text-[var(--muted)]">
             {user.location && (
-              <span className="flex items-center gap-1.5"><Icon name="location" size={14} /> {user.location}</span>
+              <span className="flex items-center gap-1 sm:gap-1.5"><Icon name="location" size={13} className="sm:hidden flex-shrink-0" /><Icon name="location" size={14} className="hidden sm:block flex-shrink-0" /> <span className="truncate">{user.location}</span></span>
             )}
             {user.website && (
-              <span className="flex items-center gap-1.5"><Icon name="link" size={14} /> {user.website}</span>
+              <span className="flex items-center gap-1 sm:gap-1.5"><Icon name="link" size={13} className="sm:hidden flex-shrink-0" /><Icon name="link" size={14} className="hidden sm:block flex-shrink-0" /> <span className="truncate">{user.website}</span></span>
             )}
-            <span className="flex items-center gap-1.5"><Icon name="calendar" size={14} /> Joined {fullDate(user.joined)}</span>
+            <span className="flex items-center gap-1 sm:gap-1.5 whitespace-nowrap"><Icon name="calendar" size={13} className="sm:hidden flex-shrink-0" /><Icon name="calendar" size={14} className="hidden sm:block flex-shrink-0" /> Joined {fullDate(user.joined)}</span>
           </div>
 
           {/* Stats */}
-          <div className="flex gap-6 mt-4 pt-4 border-t border-[var(--border)]">
+          <div className="flex gap-4 sm:gap-6 mt-3 sm:mt-4 pt-3 sm:pt-4 border-t border-[var(--border)]">
             <Stat label="Moments" value={userPosts.length} />
             <button onClick={() => setPeopleModal('supporters')} className="text-left group">
               <Stat label="Supporters" value={supporters.length} hover />
@@ -204,7 +217,7 @@ export default function ProfileView({ userId, onCreate }: { userId?: string; onC
 
       {/* Quick links (handy on mobile where sidebar is hidden) */}
       {isOwn && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 mb-5">
           {[
             { id: 'journey', label: 'My Journey', icon: 'journey' },
             { id: 'connections', label: 'Connections', icon: 'people' },
@@ -214,28 +227,30 @@ export default function ProfileView({ userId, onCreate }: { userId?: string; onC
             <button
               key={q.id}
               onClick={() => navigate(q.id as 'journey' | 'connections' | 'saved' | 'settings')}
-              className="bg-[var(--card)] border border-[var(--border)] rounded-2xl px-4 py-3.5 flex items-center gap-2.5 text-left hover:border-[var(--brand)] transition-colors"
+              className="bg-[var(--card)] border border-[var(--border)] rounded-xl sm:rounded-2xl px-3 sm:px-4 py-2.5 sm:py-3.5 flex items-center gap-2 sm:gap-2.5 text-left hover:border-[var(--brand)] transition-colors"
             >
-              <span className="w-8 h-8 rounded-xl bg-[var(--brand-soft)] text-[var(--brand)] flex items-center justify-center flex-shrink-0">
-                <Icon name={q.icon} size={16} />
+              <span className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg sm:rounded-xl bg-[var(--brand-soft)] text-[var(--brand)] flex items-center justify-center flex-shrink-0">
+                <Icon name={q.icon} size={15} className="sm:hidden" />
+                <Icon name={q.icon} size={16} className="hidden sm:block" />
               </span>
-              <span className="text-sm font-semibold text-[var(--text)]">{q.label}</span>
+              <span className="text-xs sm:text-sm font-semibold text-[var(--text)] truncate">{q.label}</span>
             </button>
           ))}
         </div>
       )}
 
       {/* Tabs */}
-      <div className="flex gap-1.5 overflow-x-auto scrollbar-hide mb-5 bg-[var(--card)] border border-[var(--border)] rounded-2xl p-1.5">
+      <div className="flex gap-1 sm:gap-1.5 overflow-x-auto scrollbar-hide mb-5 bg-[var(--card)] border border-[var(--border)] rounded-xl sm:rounded-2xl p-1 sm:p-1.5">
         {tabs.map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
-            className={`flex-1 min-w-[80px] py-2.5 rounded-xl text-sm font-semibold transition-all whitespace-nowrap px-3 ${
+            className={`flex-1 min-w-[70px] sm:min-w-[80px] py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap px-2 sm:px-3 ${
               tab === t.id ? 'bg-[var(--brand)] text-white shadow-sm' : 'text-[var(--muted)] hover:bg-[var(--card-2)]'
             }`}
           >
-            {t.label} <span className="opacity-70">({t.count})</span>
+            <span className="hidden xs:inline">{t.label} </span>
+            <span className="opacity-70">({t.count})</span>
           </button>
         ))}
       </div>
@@ -314,8 +329,8 @@ export default function ProfileView({ userId, onCreate }: { userId?: string; onC
 function Stat({ label, value, hover = false }: { label: string; value: number; hover?: boolean }) {
   return (
     <span>
-      <span className={`block text-lg font-bold leading-none ${hover ? 'group-hover:text-[var(--brand)]' : ''} text-[var(--text)]`}>{compactCount(value)}</span>
-      <span className="text-xs text-[var(--muted)]">{label}</span>
+      <span className={`block text-base sm:text-lg font-bold leading-none ${hover ? 'group-hover:text-[var(--brand)]' : ''} text-[var(--text)]`}>{compactCount(value)}</span>
+      <span className="text-[11px] sm:text-xs text-[var(--muted)]">{label}</span>
     </span>
   );
 }
@@ -350,18 +365,19 @@ function MediaGrid({
     );
   }
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+    <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 sm:gap-2">
       {posts.map((p) =>
         p.image ? (
-          <button key={p.id} onClick={() => onImage(p.image!)} className="relative aspect-square rounded-xl overflow-hidden border border-[var(--border)] group">
+          <button key={p.id} onClick={() => onImage(p.image!)} className="relative aspect-square rounded-lg sm:rounded-xl overflow-hidden border border-[var(--border)] group">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={p.image} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
           </button>
         ) : (
-          <div key={p.id} className="relative aspect-square rounded-xl overflow-hidden border border-[var(--border)] bg-black">
+          <div key={p.id} className="relative aspect-square rounded-lg sm:rounded-xl overflow-hidden border border-[var(--border)] bg-black">
             <video src={p.video} className="w-full h-full object-cover" muted preload="metadata" />
             <span className="absolute inset-0 flex items-center justify-center text-white/90">
-              <Icon name="play" size={38} />
+              <Icon name="play" size={32} className="sm:hidden" />
+              <Icon name="play" size={38} className="hidden sm:block" />
             </span>
           </div>
         )

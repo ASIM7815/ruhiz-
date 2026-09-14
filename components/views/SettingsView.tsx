@@ -125,7 +125,7 @@ function AccountSection() {
             <span className="block text-xs font-semibold text-[var(--muted)] uppercase tracking-wide mb-1.5">Email</span>
             <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" className={inputCls} />
             <span className="block text-[11px] text-[var(--muted)] mt-1">
-              {store.demoMode ? 'Demo mode — email changes are local only. Connect Supabase auth to verify emails.' : 'Managed by Supabase Auth.'}
+              {store.demoMode ? 'Changes are saved locally.' : 'Managed by your account.'}
             </span>
           </label>
           <button onClick={save} className="px-5 py-2.5 bg-[var(--brand)] text-white text-sm font-semibold rounded-xl hover:bg-[var(--brand-dark)]">
@@ -438,7 +438,7 @@ function SecuritySection() {
       }
     } else {
       await new Promise((r) => setTimeout(r, 900));
-      store.toast('Password updated (demo mode) 🔐');
+      store.toast('Password updated 🔐');
     }
     setBusy(false);
     setCurrent('');
@@ -472,7 +472,7 @@ function SecuritySection() {
           >
             {busy ? 'Updating…' : 'Update password'}
           </button>
-          {!isSupabaseConfigured && <p className="text-[11px] text-[var(--muted)]">Demo mode — connect Supabase Auth to change your real password.</p>}
+          {!isSupabaseConfigured && <p className="text-[11px] text-[var(--muted)]">Changes are saved locally.</p>}
         </div>
       </Card>
 
