@@ -894,57 +894,68 @@ create table if not exists public.notifications (
 create index if not exists idx_notifications_recipient on public.notifications (user_id, created_at desc);
 create index if not exists idx_notifications_unread    on public.notifications (user_id) where read = false;
 
+-- Notifications for post/social tables use one function per row shape.  Do not
+-- attach this function to messages: those rows use sender_id, while the social
+-- tables use user_id.  A shared trigger function that references NEW.user_id
+-- can fail at runtime when PostgreSQL executes it for a messages row.
 create or replace function public.fn_notify()
 returns trigger language plpgsql security definer set search_path = public as $$
 declare
   v_recipient uuid;
   v_actor uuid;
   v_post uuid;
-  v_convo uuid;
-  v_body text := null;
 begin
   -- historical seed data doesn't produce live notifications
   if coalesce(current_setting('app.seed_mode', true), '') = 'on' then
     return null;
   end if;
 
-  v_actor := case tg_table_name
-    when 'post_supports' then new.user_id
-    when 'comments'      then new.user_id
-    when 'supporters'    then new.supporter_id
-    when 'messages'      then new.sender_id
-    else null end;
-
-  case tg_table_name
-    when 'post_supports' then
-      select user_id, id into v_recipient, v_post from public.posts where id = new.post_id;
-      if v_recipient = v_actor then return null; end if;
+  if tg_table_name = 'post_supports' then
+    v_actor := new.user_id;
+    select user_id, id into v_recipient, v_post from public.posts where id = new.post_id;
+    if v_recipient <> v_actor then
       insert into public.notifications (user_id, actor_id, kind, post_id)
       values (v_recipient, v_actor, 'support', v_post);
-
-    when 'comments' then
-      select user_id, id into v_recipient, v_post from public.posts where id = new.post_id;
-      if v_recipient = v_actor then return null; end if;
+    end if;
+  elsif tg_table_name = 'comments' then
+    v_actor := new.user_id;
+    select user_id, id into v_recipient, v_post from public.posts where id = new.post_id;
+    if v_recipient <> v_actor then
       insert into public.notifications (user_id, actor_id, kind, post_id, body)
       values (v_recipient, v_actor, 'comment', v_post, left(new.content, 140));
-
-    when 'supporters' then
-      v_recipient := new.supported_id;
-      if v_recipient = v_actor then return null; end if;
+    end if;
+  elsif tg_table_name = 'supporters' then
+    v_actor := new.supporter_id;
+    v_recipient := new.supported_id;
+    if v_recipient <> v_actor then
       insert into public.notifications (user_id, actor_id, kind)
       values (v_recipient, v_actor, 'person_support');
+    end if;
+  end if;
+  return null;
+end $$;
 
-    when 'messages' then
-      for v_recipient in
-        select cp.user_id from public.conversation_participants cp
-        where cp.conversation_id = new.conversation_id and cp.user_id <> new.sender_id
-      loop
-        insert into public.notifications (user_id, actor_id, kind, conversation_id, body)
-        values (v_recipient, v_actor, 'message', new.conversation_id, left(new.content, 140));
-      end loop;
+-- Message notifications are deliberately isolated from the social trigger
+-- function above.  This function only ever reads fields that exist on
+-- public.messages (conversation_id, sender_id, content).
+create or replace function public.fn_notify_message()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  v_recipient uuid;
+begin
+  if coalesce(current_setting('app.seed_mode', true), '') = 'on' then
+    return null;
+  end if;
 
-    else return null;
-  end case;
+  for v_recipient in
+    select cp.user_id
+    from public.conversation_participants cp
+    where cp.conversation_id = new.conversation_id
+      and cp.user_id <> new.sender_id
+  loop
+    insert into public.notifications (user_id, actor_id, kind, conversation_id, body)
+    values (v_recipient, new.sender_id, 'message', new.conversation_id, left(new.content, 140));
+  end loop;
   return null;
 end $$;
 
@@ -957,9 +968,11 @@ create trigger trg_notify_comment after insert on public.comments
 drop trigger if exists trg_notify_person on public.supporters;
 create trigger trg_notify_person after insert on public.supporters
   for each row execute procedure public.fn_notify();
+-- Recreate rather than add: this keeps one canonical message notification
+-- trigger if an earlier deployment attached trg_notify_message to fn_notify.
 drop trigger if exists trg_notify_message on public.messages;
 create trigger trg_notify_message after insert on public.messages
-  for each row execute procedure public.fn_notify();
+  for each row execute procedure public.fn_notify_message();
 
 -- @mentions on posts and comments
 create or replace function public.fn_notify_mentions()
@@ -1592,9 +1605,11 @@ grant select on public.app_settings, public.problems to authenticated, anon;
 grant select on public.profiles to authenticated, anon;
 grant select, insert, update, delete on public.posts, public.comments, public.post_supports,
   public.post_saves, public.been_there, public.supporters, public.blocks,
-  public.conversations, public.conversation_participants, public.messages,
+  public.conversations, public.conversation_participants,
   public.notifications, public.activities, public.user_problem_scores, public.post_problems
   to authenticated;
+grant select, insert, delete on public.messages to authenticated;
+revoke update on public.messages from authenticated;
 grant usage on all sequences in schema public to authenticated;
 
 -- ============================================================================
