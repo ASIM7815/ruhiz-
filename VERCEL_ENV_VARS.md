@@ -6,37 +6,6 @@ Go to: **Vercel Dashboard → Your Project → Settings → Environment Variable
 
 ---
 
-## ✅ REQUIRED VARIABLES
-
-### 1. Supabase Configuration
-
-```bash
-# Supabase Project URL
-NEXT_PUBLIC_SUPABASE_URL=https://tengfsvzcjljxhdpanvt.supabase.co
-
-# Supabase Anon Key (JWT Token)
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRlbmdmc3Z6Y2psanhoZHBhbnZ0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkyMzMwOTIsImV4cCI6MjEwNDgwOTA5Mn0.gxUndJtcU16fGz0aytFWL7uGZevsYQe-u6b_PvaSdQo
-```
-
-### 2. Cloudflare R2 Configuration (Server-Side Only)
-
-```bash
-# R2 Account ID
-R2_ACCOUNT_ID=d337a7fca733beca44ce717ee45e8405
-
-# R2 Access Key ID
-R2_ACCESS_KEY_ID=f23db1123ce4819837de17b72001bf0c
-
-# R2 Secret Access Key
-R2_SECRET_ACCESS_KEY=6eac5a7049bcb0fd179183b078916bf21fe7939e20681dcb4c0e6680b0fca1fc
-
-# R2 Bucket Name
-R2_BUCKET_NAME=theruhiz
-
-# R2 Public URL
-R2_PUBLIC_URL=https://theruhiz.d337a7fca733beca44ce717ee45e8405.r2.cloudflarestorage.com
-```
-
 ---
 
 ## 🔐 IMPORTANT SECURITY NOTES
