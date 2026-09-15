@@ -69,12 +69,14 @@ interface PresignResponse {
 }
 
 async function presign(file: File, kind: UploadKind): Promise<PresignResponse> {
+  console.log('[upload] Requesting presign for:', { kind, filename: file.name, type: file.type, size: file.size });
   const res = await fetch('/api/upload/presign', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ kind, filename: file.name, contentType: file.type, size: file.size }),
   });
   const json = await res.json().catch(() => ({}));
+  console.log('[upload] Presign response:', { status: res.status, ok: res.ok, json });
   if (res.status === 503) throw new StorageNotConfiguredError(json.error || 'Media storage is not configured.');
   if (!res.ok) throw new Error(json.error || `Could not start upload (${res.status})`);
   return json as PresignResponse;
@@ -89,31 +91,46 @@ function putWithProgress(
   retries = 2
 ): Promise<void> {
   return new Promise((resolve, reject) => {
+    console.log('[upload] Starting PUT to R2:', { size: file.size, contentType, retries });
     const attempt = (remaining: number) => {
       const xhr = new XMLHttpRequest();
       xhr.open('PUT', url, true);
       xhr.setRequestHeader('Content-Type', contentType);
       xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+        if (e.lengthComputable) {
+          const pct = Math.round((e.loaded / e.total) * 100);
+          console.log('[upload] Progress:', pct + '%', `(${e.loaded}/${e.total})`);
+          onProgress(pct);
+        }
       };
       xhr.onload = () => {
+        console.log('[upload] PUT completed with status:', xhr.status);
         if (xhr.status >= 200 && xhr.status < 300) return resolve();
         if (xhr.status >= 500 && remaining > 0) {
+          console.warn('[upload] Server error, retrying...', { status: xhr.status, remaining });
           window.setTimeout(() => attempt(remaining - 1), 800 * Math.pow(2, retries - remaining));
         } else {
+          console.error('[upload] PUT failed:', xhr.status, xhr.responseText);
           reject(new Error(`Upload failed (${xhr.status})`));
         }
       };
       xhr.onerror = () => {
+        console.error('[upload] Network error during PUT');
         if (remaining > 0) {
+          console.warn('[upload] Retrying after network error...', { remaining });
           window.setTimeout(() => attempt(remaining - 1), 800 * Math.pow(2, retries - remaining));
         } else {
           reject(new Error('Network error during upload — check your connection and try again.'));
         }
       };
       xhr.ontimeout = () => {
-        if (remaining > 0) window.setTimeout(() => attempt(remaining - 1), 800);
-        else reject(new Error('Upload timed out. Try a smaller file or faster connection.'));
+        console.error('[upload] Upload timed out');
+        if (remaining > 0) {
+          console.warn('[upload] Retrying after timeout...', { remaining });
+          window.setTimeout(() => attempt(remaining - 1), 800);
+        } else {
+          reject(new Error('Upload timed out. Try a smaller file or faster connection.'));
+        }
       };
       xhr.send(file);
     };

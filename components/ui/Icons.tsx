@@ -112,13 +112,12 @@ const PATHS: Record<string, React.ReactNode> = {
       <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.5c1.4-1.4 1.4-3.6 0-5a3.36 3.36 0 00-5 0L12 5.9 9.5 3.5c-1.4-1.4-3.6-1.4-5 0-1.4 1.4-1.4 3.6 0 5L12 13l7.5-4.5Z" />
     </>
   ),
-  // "Been there" — footprints: I've walked in your shoes.
+  // "Been there" — hug: I'm here for you, sending support.
   footprints: (
     <>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v-2.38C4 11.5 2.97 10.5 3 8c.03-2.72 1.49-6 4.5-6C9.37 2 10 3.8 10 5.5c0 3.11-2 5.66-2 8.68V16a2 2 0 11-4 0Z" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="M20 20v-2.38c0-2.12 1.03-3.12 1-5.62-.03-2.72-1.49-6-4.5-6C14.63 6 14 7.8 14 9.5c0 3.11 2 5.66 2 8.68V20a2 2 0 10 4 0Z" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="M16 17h4" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="M4 13h4" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5z" />
+      <circle cx="12" cy="12" r="3" strokeLinecap="round" strokeLinejoin="round" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3 3c2.5 2.5 4 6 4 9M21 3c-2.5 2.5-4 6-4 9M7 20c1.5-2 2.5-4 2.5-6M17 20c-1.5-2-2.5-4-2.5-6" />
     </>
   ),
   grid: (
