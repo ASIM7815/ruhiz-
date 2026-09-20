@@ -122,7 +122,7 @@ export class SupabaseAdapter implements DuelAdapter {
         ['profiles', profileRows], ['categories', catRows], ['challenges', chRows],
       ] as const) {
         if ((res as any).error) {
-          console.error(`[SUPABASE BOOTSTRAP] Error loading ${label}:`, (res as any).error);
+          console.error('[SUPABASE BOOTSTRAP] Error loading ' + label + ':', (res as any).error);
         }
       }
       if (partRows?.error) {
