@@ -1,6 +1,6 @@
 'use client';
 
-import { useStore } from '@/lib/store';
+import { useStore } from '@/lib/duel/store';
 import { Icon } from '@/components/ui/Icons';
 
 export default function Toasts() {
@@ -12,12 +12,12 @@ export default function Toasts() {
         <button
           key={t.id}
           onClick={() => dismissToast(t.id)}
-          className="pointer-events-auto pop-in flex items-center gap-2.5 bg-[var(--text)] text-[var(--bg)] pl-4 pr-3 py-2.5 rounded-full shadow-xl text-sm font-medium max-w-full"
+          className="pointer-events-auto pop-in flex items-center gap-2.5 bg-[var(--card)] border border-[var(--border)] text-[var(--text)] pl-4 pr-3 py-2.5 rounded-full shadow-xl text-sm font-medium max-w-full"
         >
           <span
             className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center ${
-              t.type === 'error' ? 'bg-red-500' : t.type === 'info' ? 'bg-sky-500' : 'bg-[var(--brand-mid)]'
-            } text-white`}
+              t.type === 'error' ? 'bg-red-500' : t.type === 'info' ? 'bg-sky-500' : 'bg-[var(--brand)]'
+            } text-black`}
           >
             <Icon name={t.type === 'error' ? 'close' : 'check'} size={12} strokeWidth={3} />
           </span>

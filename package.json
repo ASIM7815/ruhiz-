@@ -1,5 +1,5 @@
 {
-  "name": "ruhiz",
+  "name": "duel",
   "version": "1.0.0",
   "private": true,
   "scripts": {
@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test:media": "node scripts/test/e2e-video.mjs"
+    "test": "node scripts/test/duel-engine.test.cjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1131.0",
@@ -27,5 +27,6 @@
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.3"
-  }
+  },
+  "description": "DUEL \u2014 Challenge A Better You. Social platform for personal challenges: create, join, track streaks and complete daily duels."
 }

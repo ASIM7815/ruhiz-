@@ -24,6 +24,7 @@ const KINDS: Record<string, { folder: string; maxMB: number; mimes: string[] }> 
   'chat-image': { folder: 'chats', maxMB: 8, mimes: ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'] },
   avatar: { folder: 'avatars', maxMB: 5, mimes: ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'] },
   cover: { folder: 'avatars', maxMB: 8, mimes: ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'] },
+  'challenge-cover': { folder: 'covers', maxMB: 8, mimes: ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'] },
   'post-video': { folder: 'posts', maxMB: 300, mimes: ['video/mp4', 'video/quicktime', 'video/webm', 'video/x-m4v'] },
 } as const;
 

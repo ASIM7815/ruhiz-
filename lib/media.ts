@@ -29,7 +29,7 @@ export function isR2Key(value?: string | null): value is string {
   if (/^(https?:|data:|blob:)/i.test(value)) return false;
   if (value.startsWith('/')) return false;
   // keys look like "posts/<uuid>/…", "avatars/<uuid>/…", "chats/<uuid>/…"
-  return /^(posts|avatars|chats)\/[^\s]+$/.test(value);
+  return /^(posts|avatars|chats|covers)\/[^\s]+$/.test(value);
 }
 
 /** Resolve any media reference (URL or R2 key) into a displayable URL. */

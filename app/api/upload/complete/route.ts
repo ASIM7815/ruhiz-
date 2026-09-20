@@ -11,7 +11,7 @@ import { createClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
 
-const KEY_PATTERN = /^(posts|avatars|chats)\/[A-Za-z0-9_-]+\/\d{4}-\d{2}\/[0-9a-fA-F-]{10,40}\.[A-Za-z0-9]{2,5}$/;
+const KEY_PATTERN = /^(posts|avatars|chats|covers)\/[A-Za-z0-9_-]+\/\d{4}-\d{2}\/[0-9a-fA-F-]{10,40}\.[A-Za-z0-9]{2,5}$/;
 
 export async function POST(request: NextRequest) {
   try {

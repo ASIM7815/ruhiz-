@@ -1,112 +1,125 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { useStore } from '@/lib/store';
+import { useMemo } from 'react';
+import { useStore } from '@/lib/duel/store';
 import { useNav } from './nav';
 import { Icon } from '@/components/ui/Icons';
-import { Avatar, FollowButton } from '@/components/ui/Primitives';
-import { THOUGHTS, TRENDING } from '@/lib/data/sample';
-import { ME_ID } from '@/lib/data/sample';
+import { Avatar, Cover } from '@/components/ui/Primitives';
 
 export default function RightPanel() {
-  const { users, following, followers, toggleFollow, isFollowing, toast } = useStore();
+  const { db, categories, trending, recommendedViews, getUser } = useStore();
   const { navigate } = useNav();
-  const [thoughtIndex] = useState(() => Math.floor(Math.random() * THOUGHTS.length));
 
-  const suggestions = useMemo(() => {
-    return Object.values(users).filter((u) => u.id !== ME_ID && !following.includes(u.id)).slice(0, 3);
-  }, [users, following]);
+  const spotlight = recommendedViews[0] ?? db.challenges[0];
+
+  const leaders = useMemo(() => {
+    const agg = new Map<string, { completions: number; streak: number }>();
+    for (const p of db.participants) {
+      const e = agg.get(p.userId) ?? { completions: 0, streak: 0 };
+      if (p.status === 'completed') e.completions += 1;
+      e.streak = Math.max(e.streak, p.longestStreak);
+      agg.set(p.userId, e);
+    }
+    return [...agg.entries()]
+      .filter(([id]) => id !== db.meId && db.profiles[id])
+      .sort((a, b) => b[1].completions - a[1].completions || b[1].streak - a[1].streak)
+      .slice(0, 4);
+  }, [db.participants, db.profiles]);
 
   return (
     <aside className="hidden xl:block fixed right-0 top-[64px] bottom-0 w-[330px] overflow-y-auto scrollbar-hide p-5 space-y-5 z-30">
-      {/* Today's thought */}
-      <div className="bg-gradient-to-br from-[var(--brand-soft)] to-[var(--card)] border border-[var(--border)] rounded-2xl p-5">
-        <div className="flex items-center gap-2 mb-3">
-          <Icon name="spark" size={18} className="text-[var(--brand)]" />
-          <h3 className="font-bold text-[var(--text)] text-sm">Today’s Thought</h3>
+      {/* Spotlight */}
+      {spotlight && (
+        <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl overflow-hidden">
+          <div className="h-28 relative">
+            <Cover coverUrl={spotlight.coverUrl} category={spotlight.category} title={spotlight.title} />
+            <span className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-black/70 text-[var(--brand)] text-[10px] font-bold uppercase tracking-wider">
+              Pick for you
+            </span>
+          </div>
+          <div className="p-4">
+            <h3 className="font-bold text-[var(--text)] text-sm leading-snug">{spotlight.title}</h3>
+            <p className="text-xs text-[var(--muted)] mt-1 line-clamp-2">{spotlight.reason ?? spotlight.category?.tagline}</p>
+            <button
+              onClick={() => navigate('challenge', spotlight.id)}
+              className="mt-3 w-full py-2 rounded-xl bg-[var(--brand)] text-black text-xs font-bold hover:bg-[var(--brand-dark)] transition-colors"
+            >
+              View challenge
+            </button>
+          </div>
         </div>
-        <p className="text-sm text-[var(--text)] leading-relaxed italic mb-3">“{THOUGHTS[thoughtIndex]}”</p>
-        <div className="w-10 h-1 bg-[var(--brand)] rounded-full" />
-      </div>
+      )}
 
-      {/* Trending topics */}
+      {/* Trending categories */}
       <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <Icon name="trending" size={18} className="text-[var(--brand)]" />
-            <h3 className="font-bold text-[var(--text)] text-sm">Trending Topics</h3>
+            <h3 className="font-bold text-[var(--text)] text-sm">Trending Categories</h3>
           </div>
           <button onClick={() => navigate('explore')} className="text-xs font-semibold text-[var(--brand)] hover:underline">
             See all
           </button>
         </div>
         <div className="space-y-1">
-          {TRENDING.map((t, i) => (
-            <button
-              key={t.topic}
-              onClick={() => navigate('explore', t.topic)}
-              className="w-full flex items-center gap-3 p-2 rounded-xl hover:bg-[var(--card-2)] transition-colors text-left"
-            >
-              <span className="w-6 h-6 flex items-center justify-center bg-[var(--brand-soft)] text-[var(--brand)] rounded-full text-xs font-bold flex-shrink-0">
-                {i + 1}
-              </span>
-              <span className="flex-1 min-w-0">
-                <span className="block font-semibold text-[var(--text)] text-sm truncate">{t.topic}</span>
-                <span className="block text-xs text-[var(--muted)]">{t.count}</span>
-              </span>
-            </button>
-          ))}
+          {trending.map((t, i) => {
+            const cat = categories.find((c) => c.id === t.categoryId);
+            if (!cat) return null;
+            return (
+              <button
+                key={t.categoryId}
+                onClick={() => navigate('explore', cat.name)}
+                className="w-full flex items-center gap-3 p-2 rounded-xl hover:bg-[var(--card-2)] transition-colors text-left"
+              >
+                <span className="w-7 h-7 flex items-center justify-center rounded-lg text-sm flex-shrink-0" style={{ background: `${cat.color}22` }}>
+                  {cat.emoji}
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span className="block font-semibold text-[var(--text)] text-sm truncate">{cat.name}</span>
+                  <span className="block text-xs text-[var(--muted)]">{t.participants.toLocaleString()} challengers</span>
+                </span>
+                <span className="text-[10px] font-bold text-[var(--muted)]">#{i + 1}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* People to connect with */}
+      {/* Community leaders */}
       <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <Icon name="people" size={18} className="text-[var(--brand)]" />
-            <h3 className="font-bold text-[var(--text)] text-sm">People to Connect With</h3>
-          </div>
-          <button onClick={() => navigate('connections')} className="text-xs font-semibold text-[var(--brand)] hover:underline">
-            See all
-          </button>
+        <div className="flex items-center gap-2 mb-4">
+          <Icon name="trophy" size={18} className="text-[var(--brand)]" />
+          <h3 className="font-bold text-[var(--text)] text-sm">Top Challengers</h3>
         </div>
-        <div className="space-y-3.5">
-          {suggestions.length === 0 && (
-            <p className="text-xs text-[var(--muted)]">You’re connected with everyone we suggest — nice!</p>
-          )}
-          {suggestions.map((u) => (
-            <div key={u.id} className="flex items-center gap-3">
-              <Avatar user={u} size={40} onClick={() => navigate('profile', u.id)} />
-              <div className="flex-1 min-w-0">
-                <button onClick={() => navigate('profile', u.id)} className="block font-semibold text-sm text-[var(--text)] truncate hover:underline text-left">
-                  {u.name}
-                </button>
-                <p className="text-xs text-[var(--muted)] truncate">{followers.includes(u.id) ? 'Supports you' : u.bio.slice(0, 40)}</p>
-              </div>
-              <FollowButton
-                small
-                following={isFollowing(u.id)}
-                onToggle={() => {
-                  toggleFollow(u.id);
-                  toast(isFollowing(u.id) ? `Stopped supporting ${u.name}` : `You're now supporting ${u.name} 💚`);
-                }}
-              />
-            </div>
-          ))}
+        <div className="space-y-3">
+          {leaders.map(([id, stats], i) => {
+            const u = getUser(id);
+            return (
+              <button key={id} onClick={() => navigate('profile', id)} className="w-full flex items-center gap-3 text-left hover:opacity-90 transition-opacity">
+                <span className="text-xs font-bold text-[var(--muted)] w-4">{i + 1}</span>
+                <Avatar user={u} size={36} />
+                <span className="flex-1 min-w-0">
+                  <span className="block font-semibold text-sm text-[var(--text)] truncate">{u.name}</span>
+                  <span className="block text-xs text-[var(--muted)]">{stats.completions} completed · best streak {stats.streak}</span>
+                </span>
+                <Icon name="medal" size={16} className="text-[var(--brand)]" />
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* Share your story */}
-      <div className="relative bg-gradient-to-br from-[var(--brand-soft)] to-[var(--card)] border border-[var(--border)] rounded-2xl p-5 overflow-hidden">
-        <h3 className="font-bold text-[var(--text)] text-sm mb-1.5">Share Your Story</h3>
-        <p className="text-sm text-[var(--muted)] mb-3">A safer, kinder space for your thoughts.</p>
+      {/* CTA */}
+      <div className="relative bg-[var(--card-2)] border border-[var(--border)] rounded-2xl p-5 overflow-hidden">
+        <h3 className="display text-[var(--text)] text-sm mb-1.5">Start your duel</h3>
+        <p className="text-sm text-[var(--muted)] mb-3">Create a challenge and let the community hold you to it.</p>
         <button
-          onClick={() => navigate('home')}
-          className="p-2 bg-[var(--brand)] text-white rounded-full hover:bg-[var(--brand-dark)] transition-colors"
-          aria-label="Share your story"
+          onClick={() => navigate('create')}
+          className="px-4 py-2 bg-[var(--brand)] text-black rounded-xl text-xs font-bold hover:bg-[var(--brand-dark)] transition-colors"
         >
-          <Icon name="pen" size={16} />
+          Create Challenge
         </button>
+        <Icon name="swords" size={56} className="absolute -bottom-3 -right-3 text-[var(--brand)] opacity-15" />
       </div>
     </aside>
   );

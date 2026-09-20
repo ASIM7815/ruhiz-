@@ -7,7 +7,7 @@ import { createClient } from '@/lib/supabase/server';
 /**
  * Presigned GET for private R2 media.
  *
- * - requires an authenticated Supabase session (reading Ruhiz content is for
+ * - requires an authenticated Supabase session (reading DUEL content is for
  *   signed-in members; the underlying post/chat visibility is additionally
  *   enforced by Postgres RLS on the rows referencing these keys)
  * - only object keys following the app's namespaced key format are signable
@@ -24,7 +24,7 @@ import { createClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
 
-const KEY_PATTERN = /^(posts|avatars|chats)\/[A-Za-z0-9_-]+\/\d{4}-\d{2}\/[0-9a-fA-F-]{10,40}\.[A-Za-z0-9]{2,5}$/;
+const KEY_PATTERN = /^(posts|avatars|chats|covers)\/[A-Za-z0-9_-]+\/\d{4}-\d{2}\/[0-9a-fA-F-]{10,40}\.[A-Za-z0-9]{2,5}$/;
 const TTL_SECONDS = 3600;
 
 /** Content type to force on the response, keyed by the extension we mint. */

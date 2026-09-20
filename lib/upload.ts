@@ -19,7 +19,7 @@ import { isR2Configured, isSupabaseConfigured } from './config';
  * so the app keeps working end-to-end.
  */
 
-export type UploadKind = 'post-image' | 'post-video' | 'avatar' | 'cover' | 'chat-image';
+export type UploadKind = 'post-image' | 'post-video' | 'avatar' | 'cover' | 'chat-image' | 'challenge-cover';
 
 export interface UploadResult {
   /** R2 object key (production) or data/object URL (demo fallback). */
@@ -32,6 +32,7 @@ export const UPLOAD_LIMITS: Record<UploadKind, { maxMB: number; mimes: string[] 
   'chat-image': { maxMB: 8, mimes: ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'] },
   avatar: { maxMB: 5, mimes: ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'] },
   cover: { maxMB: 8, mimes: ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'] },
+  'challenge-cover': { maxMB: 8, mimes: ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'] },
   'post-video': { maxMB: 300, mimes: ['video/mp4', 'video/quicktime', 'video/webm', 'video/x-m4v'] },
 };
 

@@ -42,9 +42,7 @@ export async function updateSession(request: NextRequest) {
   } = await supabase.auth.getUser()
 
   // Protected routes
-  if (!user && (request.nextUrl.pathname.startsWith('/feed') || 
-                 request.nextUrl.pathname.startsWith('/profile') ||
-                 request.nextUrl.pathname.startsWith('/messages'))) {
+  if (!user && request.nextUrl.pathname.startsWith('/feed')) {
     // Redirect to login
     const url = request.nextUrl.clone()
     url.pathname = '/login'

@@ -1,18 +1,10 @@
-import type {
-  AppNotification,
-  Comment,
-  NotificationKind,
-  Post,
-  PostType,
-  Thread,
-  UserProfile,
-} from '@/lib/types';
+import type { AppNotification, NotificationKind, Thread, UserProfile } from '@/lib/types';
+import type { Category, Challenge, ChallengeComment, Checkin, Participation } from '@/lib/duel/types';
 
 /**
- * Row mappers + typed queries for the Supabase production schema
- * (supabase/migrations/20260913000000_ruhiz_production.sql).
- * The current user's profile id is surfaced to the UI as the well-known
- * app id "me"; every other profile id is used as-is.
+ * Row mappers + typed helpers for the DUEL production schema
+ * (supabase/migrations/20260920000000_duel_platform.sql).
+ * The signed-in member's profile id is surfaced to the UI as the app id "me".
  */
 
 export const ME_APP_ID = 'me';
@@ -71,9 +63,9 @@ export class IdMapper {
 
 export function mapProfile(row: any, ids: IdMapper): UserProfile {
   return {
-    id: row.user_id ? ids.app(row.id) : row.id, // own profile → "me", others → profile id
-    username: row.username ?? 'member',
-    name: row.display_name ?? row.username ?? 'Ruhiz member',
+    id: row.user_id ? ids.app(row.id) : row.id,
+    username: row.username ?? 'duelist',
+    name: row.display_name ?? row.username ?? 'DUEL member',
     avatar: row.avatar_url ?? null,
     avatarHue: row.avatar_hue ?? 152,
     cover: row.cover_url ?? null,
@@ -86,58 +78,73 @@ export function mapProfile(row: any, ids: IdMapper): UserProfile {
   };
 }
 
-function normalizeUsername(value: string | null | undefined): string {
-  const cleaned = (value ?? '')
-    .replace(/[^a-zA-Z0-9_]/g, '')
-    .slice(0, 20);
-  return cleaned.length >= 3 ? cleaned : 'member';
-}
-
-function withNumericSuffix(base: string, n: number): string {
-  if (n <= 0) return base;
-  const suffix = String(n);
-  return `${base.slice(0, Math.max(1, 20 - suffix.length))}${suffix}`;
-}
-
-export function mapPost(
-  row: any,
-  opts: {
-    ids: IdMapper;
-    problems: { id: string; score: number }[];
-    supportedByMe: boolean;
-    savedByMe: boolean;
-    beenThere: boolean;
-    comments: Comment[];
-  }
-): Post {
-  const type: PostType = ['photo', 'video', 'moment', 'question'].includes(row.type) ? row.type : 'moment';
+export function mapCategory(row: any): Category {
   return {
     id: row.id,
-    userId: opts.ids.app(row.user_id),
-    type,
-    text: row.content ?? '',
-    image: row.image_url ?? undefined,
-    video: row.video_url ?? undefined,
-    topics: row.topics ?? [],
-    problems: opts.problems,
-    createdAt: row.created_at,
-    supports: row.support_count ?? 0,
-    shares: row.share_count ?? 0,
-    comments: opts.comments,
-    commentCount: Math.max(row.comment_count ?? 0, opts.comments.length),
-    supportedByMe: opts.supportedByMe,
-    savedByMe: opts.savedByMe,
-    beenThere: opts.beenThere,
-    beenThereCount: row.been_there_count ?? 0,
-    views: row.view_count ?? 0,
+    name: row.name,
+    emoji: row.emoji ?? '•',
+    color: row.color ?? '#22d3ee',
+    tagline: row.tagline ?? '',
+    sort: row.sort ?? 0,
   };
 }
 
-export function mapComment(row: any, ids: IdMapper): Comment {
+export function mapChallenge(row: any): Challenge {
   return {
     id: row.id,
+    creatorId: row.creator_id,
+    title: row.title,
+    description: row.description ?? '',
+    categoryId: row.category_id,
+    durationDays: row.duration_days,
+    difficulty: row.difficulty ?? 'medium',
+    dailyTask: row.daily_task ?? '',
+    coverUrl: row.cover_url ?? null,
+    tags: row.tags ?? [],
+    status: row.status ?? 'open',
+    participantCount: row.participant_count ?? 0,
+    likeCount: row.like_count ?? 0,
+    commentCount: row.comment_count ?? 0,
+    saveCount: row.save_count ?? 0,
+    shareCount: row.share_count ?? 0,
+    viewCount: row.view_count ?? 0,
+    completionCount: row.completion_count ?? 0,
+    createdAt: row.created_at,
+  };
+}
+
+export function mapParticipation(row: any, ids: IdMapper): Participation {
+  return {
+    challengeId: row.challenge_id,
     userId: ids.app(row.user_id),
-    text: row.content,
+    status: row.status ?? 'active',
+    joinedAt: row.joined_at,
+    currentStreak: row.current_streak ?? 0,
+    longestStreak: row.longest_streak ?? 0,
+    completedDays: row.completed_days ?? 0,
+    lastCheckinDate: row.last_checkin_date ?? null,
+    completedAt: row.completed_at ?? null,
+  };
+}
+
+export function mapCheckin(row: any, ids: IdMapper): Checkin {
+  return {
+    id: row.id,
+    challengeId: row.challenge_id,
+    userId: ids.app(row.user_id),
+    dayNumber: row.day_number,
+    date: row.checkin_date,
+    note: row.note ?? '',
+    createdAt: row.created_at,
+  };
+}
+
+export function mapComment(row: any, ids: IdMapper): ChallengeComment {
+  return {
+    id: row.id,
+    challengeId: row.challenge_id,
+    userId: ids.app(row.user_id),
+    text: row.body,
     createdAt: row.created_at,
   };
 }
@@ -146,8 +153,8 @@ export function mapNotification(row: any, ids: IdMapper): AppNotification {
   return {
     id: row.id,
     kind: row.kind as NotificationKind,
-    actorId: ids.app(row.actor_id),
-    postId: row.post_id ?? undefined,
+    actorId: row.actor_id ? ids.app(row.actor_id) : undefined,
+    challengeId: row.challenge_id ?? undefined,
     conversationId: row.conversation_id ?? undefined,
     text: row.body ?? undefined,
     at: row.created_at,
@@ -165,13 +172,20 @@ export function mapMessage(row: any, myProfileId: string): Thread['messages'][nu
 }
 
 /* ------------------------------------------------------------------ */
-/* Queries                                                             */
+/* Shared queries                                                      */
 /* ------------------------------------------------------------------ */
 
-export function chunk<T>(arr: T[], size = 100): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
+function normalizeUsername(value: string | null | undefined): string {
+  const cleaned = (value ?? '')
+    .replace(/[^a-zA-Z0-9_]/g, '')
+    .slice(0, 20);
+  return cleaned.length >= 3 ? cleaned : 'duelist';
+}
+
+function withNumericSuffix(base: string, n: number): string {
+  if (n <= 0) return base;
+  const suffix = String(n);
+  return `${base.slice(0, Math.max(1, 20 - suffix.length))}${suffix}`;
 }
 
 /** Loads the signed-in member's profile, creating one if it's missing. */
@@ -180,9 +194,8 @@ export async function ensureProfile(sb: SupabaseClientLike, user: { id: string; 
   if (error) throw error;
   if (data) return data;
 
-  const base = normalizeUsername(user.user_metadata?.username || user.email?.split('@')[0] || 'member');
+  const base = normalizeUsername(user.user_metadata?.username || user.email?.split('@')[0] || 'duelist');
   let candidate = base;
-  // uniqueness loop (DB has a unique index on lower(username))
   for (let i = 0; i < 20; i++) {
     const { data: existing } = await sb
       .from('profiles')
@@ -256,7 +269,7 @@ export async function loadConversations(sb: SupabaseClientLike, myProfileId: str
       otherProfileId,
       thread: {
         id: convoId,
-        userId: convoId, // patched by the store once profiles are known
+        userId: convoId,
         messages,
         unread,
         online: false,
