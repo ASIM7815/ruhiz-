@@ -1,17 +1,4 @@
-export type PostType = 'photo' | 'video' | 'moment' | 'question';
-
-/** Deterministic problem categories used by the Ruhiz recommendation system. */
-export interface ProblemCategory {
-  id: string;
-  label: string;
-  emoji: string;
-  keywords: string[]; // single words or multi-word phrases, lowercase
-}
-
-export interface PostProblem {
-  id: string;
-  score: number; // 0..1 share of the post's classification mass
-}
+/** DUEL — shared app-level types (profiles, social, settings, routing). */
 
 export interface UserProfile {
   id: string;
@@ -28,34 +15,6 @@ export interface UserProfile {
   persona?: boolean; // seeded community profile (no login)
 }
 
-export interface Comment {
-  id: string;
-  userId: string;
-  text: string;
-  createdAt: string;
-}
-
-export interface Post {
-  id: string;
-  userId: string;
-  type: PostType;
-  text: string;
-  image?: string; // public URL or private R2 object key
-  video?: string; // public URL or private R2 object key
-  topics: string[];
-  problems: PostProblem[]; // classified problem categories (recommendation input)
-  createdAt: string;
-  supports: number; // "Support" reactions (replaces likes)
-  shares: number;
-  comments: Comment[];
-  commentCount: number;
-  supportedByMe: boolean;
-  savedByMe: boolean;
-  beenThere: boolean;
-  beenThereCount: number;
-  views: number;
-}
-
 export interface ChatMessage {
   id: string;
   fromMe: boolean;
@@ -65,7 +24,7 @@ export interface ChatMessage {
 }
 
 export interface Thread {
-  id: string; // conversation id (uuid in production, local id in demo)
+  id: string; // conversation id
   userId: string; // the other participant's profile id
   messages: ChatMessage[];
   unread: number;
@@ -75,35 +34,41 @@ export interface Thread {
 }
 
 export type NotificationKind =
-  | 'support' // someone supported your post
-  | 'comment'
-  | 'person_support' // someone new supports you (was "follow")
+  | 'like' // someone liked your challenge
+  | 'comment' // someone commented on your challenge
+  | 'join' // someone joined your challenge
+  | 'complete' // someone completed your challenge
+  | 'checkin' // a participant checked in (challenge owner)
   | 'mention'
-  | 'message';
+  | 'message'
+  | 'streak' // your own streak milestone / reminder
+  | 'system';
 
 export interface AppNotification {
   id: string;
   kind: NotificationKind;
-  actorId: string;
-  postId?: string;
+  actorId?: string;
+  challengeId?: string;
   conversationId?: string;
   text?: string;
   at: string;
   read: boolean;
 }
 
-/** Every tracked interaction feeding the recommendation engine. */
+/** Every tracked interaction feeding the DUEL recommendation engine. */
 export type ActivityAction =
   | 'view'
-  | 'watch'
-  | 'support'
+  | 'join'
+  | 'leave'
+  | 'checkin'
+  | 'complete'
+  | 'like'
   | 'comment'
   | 'save'
   | 'share'
   | 'search'
-  | 'ignore'
-  | 'not_interested'
-  | 'been_there';
+  | 'create'
+  | 'not_interested';
 
 export interface Session {
   id: string;
@@ -124,9 +89,10 @@ export interface Settings {
   blocked: string[];
   notifLikes: boolean;
   notifComments: boolean;
-  notifFollows: boolean;
+  notifJoins: boolean;
   notifMessages: boolean;
   notifMentions: boolean;
+  notifStreaks: boolean;
   emailDigest: 'off' | 'daily' | 'weekly';
   twoFactor: boolean;
   loginAlerts: boolean;
@@ -135,17 +101,18 @@ export interface Settings {
 export type ViewId =
   | 'home'
   | 'explore'
-  | 'journey'
-  | 'connections'
-  | 'messages'
+  | 'create'
+  | 'challenges'
+  | 'progress'
   | 'notifications'
-  | 'saved'
+  | 'messages'
   | 'profile'
-  | 'settings';
+  | 'settings'
+  | 'challenge';
 
 export interface ViewRoute {
   view: ViewId;
-  param?: string; // e.g. profile user id, messages thread id, explore query
+  param?: string; // e.g. profile user id, messages thread id, challenge id, explore query
 }
 
 /** Where the store's data currently comes from. */

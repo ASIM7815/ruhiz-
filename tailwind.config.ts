@@ -9,11 +9,12 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        'ruhiz-teal': '#2D5F5D',
-        'ruhiz-light-teal': '#E8F4F3',
+        'duel-green': '#16e08a',
+        'duel-green-dark': '#0dbb72',
+        'duel-ink': '#08090b',
       },
       fontFamily: {
-        'playfair': ['Playfair Display', 'serif'],
+        'display': ['Archivo', 'Inter', 'system-ui', 'sans-serif'],
         'sans': ['Inter', 'system-ui', 'sans-serif'],
       },
     },

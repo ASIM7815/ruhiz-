@@ -1,531 +1,188 @@
 'use client';
 
-import React, { useState } from 'react';
-import { useStore } from '@/lib/store';
+import { useState } from 'react';
+import { useStore } from '@/lib/duel/store';
 import { useNav } from '@/components/app/nav';
 import { Icon } from '@/components/ui/Icons';
-import { Toggle, Segmented, Avatar, Badge } from '@/components/ui/Primitives';
-import { ConfirmModal } from '@/components/post/PostCard';
-import { timeAgo } from '@/lib/format';
-import { isSupabaseConfigured } from '@/lib/config';
-
-type Section = 'account' | 'privacy' | 'notifications' | 'appearance' | 'security';
-
-const SECTIONS: { id: Section; label: string; icon: string; desc: string }[] = [
-  { id: 'account', label: 'Account', icon: 'user', desc: 'Name, username, email & account status' },
-  { id: 'privacy', label: 'Privacy', icon: 'eye', desc: 'Who can see and reach you' },
-  { id: 'notifications', label: 'Notifications', icon: 'bell', desc: 'What you get notified about' },
-  { id: 'appearance', label: 'Appearance', icon: 'moon', desc: 'Theme, font size & motion' },
-  { id: 'security', label: 'Security', icon: 'shield', desc: 'Password, 2FA & sessions' },
-];
+import { GhostButton, PrimaryButton, Segmented, Toggle } from '@/components/ui/Primitives';
 
 export default function SettingsView() {
-  const [section, setSection] = useState<Section>('account');
+  const store = useStore();
+  const { navigate } = useNav();
+  const s = store.db.settings;
+  const [confirmReset, setConfirmReset] = useState(false);
+
+  const exportData = () => {
+    const blob = new Blob([JSON.stringify(store.db, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'duel-data-export.json';
+    a.click();
+    URL.revokeObjectURL(url);
+    store.toast('Data export downloaded.', 'info');
+  };
 
   return (
-    <div className="max-w-[820px] mx-auto">
-      <div className="mb-5">
-        <h1 className="text-2xl font-bold text-[var(--text)] mb-1">Settings</h1>
-        <p className="text-sm text-[var(--muted)]">Manage your Ruhiz experience.</p>
+    <div className="max-w-3xl mx-auto space-y-6 fade-in">
+      <div>
+        <h1 className="display text-2xl sm:text-3xl text-[var(--text)]">Settings</h1>
+        <p className="text-sm text-[var(--muted)] mt-1">Appearance, notifications, privacy and security.</p>
       </div>
 
-      <div className="flex flex-col lg:flex-row gap-5">
-        {/* Section nav */}
-        <div className="lg:w-[250px] flex-shrink-0">
-          <div className="flex lg:flex-col gap-1.5 overflow-x-auto scrollbar-hide pb-1">
-            {SECTIONS.map((s) => (
-              <button
-                key={s.id}
-                onClick={() => setSection(s.id)}
-                className={`flex items-center gap-3 px-4 py-3 rounded-xl text-left whitespace-nowrap lg:whitespace-normal transition-all flex-shrink-0 ${
-                  section === s.id ? 'bg-[var(--brand)] text-white shadow-sm' : 'bg-[var(--card)] border border-[var(--border)] text-[var(--text)] hover:border-[var(--brand)]'
-                }`}
-              >
-                <Icon name={s.icon} size={18} className={section === s.id ? '' : 'text-[var(--brand)]'} />
-                <span>
-                  <span className="block text-sm font-semibold">{s.label}</span>
-                  <span className={`hidden lg:block text-xs ${section === s.id ? 'text-white/75' : 'text-[var(--muted)]'}`}>{s.desc}</span>
-                </span>
+      <Card title="Appearance" icon="sun">
+        <Row label="Theme" hint="Dark is the house style — light mode for daylight grinds.">
+          <Segmented
+            options={[{ value: 'dark' as const, label: 'Dark' }, { value: 'light' as const, label: 'Light' }, { value: 'system' as const, label: 'System' }]}
+            value={s.theme}
+            onChange={(v) => store.updateSettings({ theme: v })}
+          />
+        </Row>
+        <Row label="Text size">
+          <Segmented
+            options={[{ value: 'compact' as const, label: 'Compact' }, { value: 'standard' as const, label: 'Standard' }, { value: 'large' as const, label: 'Large' }]}
+            value={s.fontSize}
+            onChange={(v) => store.updateSettings({ fontSize: v })}
+          />
+        </Row>
+        <Row label="Reduce motion" hint="Disable animations and transitions.">
+          <Toggle checked={s.reduceMotion} onChange={(v) => store.updateSettings({ reduceMotion: v })} label="Reduce motion" />
+        </Row>
+      </Card>
+
+      <Card title="Notifications" icon="bell">
+        <Row label="Likes" hint="Someone likes your challenge.">
+          <Toggle checked={s.notifLikes} onChange={(v) => store.updateSettings({ notifLikes: v })} label="Like notifications" />
+        </Row>
+        <Row label="Comments" hint="Replies and comments on your challenges.">
+          <Toggle checked={s.notifComments} onChange={(v) => store.updateSettings({ notifComments: v })} label="Comment notifications" />
+        </Row>
+        <Row label="New participants" hint="Someone joins a challenge you created.">
+          <Toggle checked={s.notifJoins} onChange={(v) => store.updateSettings({ notifJoins: v })} label="Join notifications" />
+        </Row>
+        <Row label="Messages">
+          <Toggle checked={s.notifMessages} onChange={(v) => store.updateSettings({ notifMessages: v })} label="Message notifications" />
+        </Row>
+        <Row label="Streak alerts" hint="Daily reminders and streak milestones.">
+          <Toggle checked={s.notifStreaks} onChange={(v) => store.updateSettings({ notifStreaks: v })} label="Streak notifications" />
+        </Row>
+        <Row label="Email digest">
+          <Segmented
+            options={[{ value: 'off' as const, label: 'Off' }, { value: 'daily' as const, label: 'Daily' }, { value: 'weekly' as const, label: 'Weekly' }]}
+            value={s.emailDigest}
+            onChange={(v) => store.updateSettings({ emailDigest: v })}
+          />
+        </Row>
+      </Card>
+
+      <Card title="Privacy" icon="shield">
+        <Row label="Profile visibility">
+          <Segmented
+            options={[{ value: 'public' as const, label: 'Public' }, { value: 'connections' as const, label: 'Connections' }, { value: 'private' as const, label: 'Private' }]}
+            value={s.profileVisibility}
+            onChange={(v) => store.updateSettings({ profileVisibility: v })}
+          />
+        </Row>
+        <Row label="Allow messages from">
+          <Segmented
+            options={[{ value: 'everyone' as const, label: 'Everyone' }, { value: 'connections' as const, label: 'Connections' }, { value: 'none' as const, label: 'No one' }]}
+            value={s.allowMessagesFrom}
+            onChange={(v) => store.updateSettings({ allowMessagesFrom: v })}
+          />
+        </Row>
+        <Row label="Show activity status" hint="Let others see when you are active.">
+          <Toggle checked={s.showActivityStatus} onChange={(v) => store.updateSettings({ showActivityStatus: v })} label="Activity status" />
+        </Row>
+        <Row label="Read receipts">
+          <Toggle checked={s.showReadReceipts} onChange={(v) => store.updateSettings({ showReadReceipts: v })} label="Read receipts" />
+        </Row>
+        <Row label="Blocked users" hint={s.blocked.length ? `${s.blocked.length} blocked` : 'Nobody blocked.'}>
+          <div className="flex flex-wrap gap-2 justify-end max-w-[60%]">
+            {s.blocked.length === 0 && <span className="text-xs text-[var(--muted)]">—</span>}
+            {s.blocked.map((id) => (
+              <button key={id} onClick={() => store.unblockUser(id)} className="px-2.5 py-1 rounded-full bg-[var(--danger-soft)] text-[var(--danger)] text-xs font-semibold hover:opacity-80">
+                {store.getUser(id).username} ✕
               </button>
             ))}
           </div>
-        </div>
+        </Row>
+      </Card>
 
-        {/* Section body */}
-        <div className="flex-1 min-w-0 fade-in" key={section}>
-          {section === 'account' && <AccountSection />}
-          {section === 'privacy' && <PrivacySection />}
-          {section === 'notifications' && <NotificationsSection />}
-          {section === 'appearance' && <AppearanceSection />}
-          {section === 'security' && <SecuritySection />}
-        </div>
-      </div>
+      <Card title="Security" icon="lock">
+        <Row label="Two-factor authentication" hint="Add a verification step at sign-in.">
+          <Toggle checked={s.twoFactor} onChange={(v) => store.updateSettings({ twoFactor: v })} label="Two-factor authentication" />
+        </Row>
+        <Row label="Login alerts" hint="Email me when a new device signs in.">
+          <Toggle checked={s.loginAlerts} onChange={(v) => store.updateSettings({ loginAlerts: v })} label="Login alerts" />
+        </Row>
+        <Row label="Current session" hint="This device · signed in with DUEL">
+          <span className="text-xs font-semibold text-[var(--brand)] flex items-center gap-1">
+            <Icon name="check" size={13} /> Active
+          </span>
+        </Row>
+      </Card>
+
+      <Card title="Data & account" icon="settings">
+        <Row label="Export my data" hint="Download everything DUEL stores about you.">
+          <GhostButton onClick={exportData}>
+            <Icon name="upload" size={15} className="rotate-180" /> Export JSON
+          </GhostButton>
+        </Row>
+        {store.dataMode === 'demo' && (
+          <Row label="Reset local data" hint="Clears this browser's DUEL database and restores the seed community.">
+            {confirmReset ? (
+              <div className="flex gap-2">
+                <PrimaryButton
+                  onClick={() => {
+                    void store.resetLocal();
+                    setConfirmReset(false);
+                  }}
+                  className="!bg-[var(--danger)] !text-white"
+                >
+                  Confirm reset
+                </PrimaryButton>
+                <GhostButton onClick={() => setConfirmReset(false)}>Cancel</GhostButton>
+              </div>
+            ) : (
+              <GhostButton onClick={() => setConfirmReset(true)}>
+                <Icon name="refresh" size={15} /> Reset
+              </GhostButton>
+            )}
+          </Row>
+        )}
+        <Row label="Sign out" hint="Ends your session on this device.">
+          <GhostButton onClick={() => void store.signOut().then(() => navigate('home'))}>
+            <Icon name="logout" size={15} /> Log out
+          </GhostButton>
+        </Row>
+      </Card>
+
+      <p className="text-center text-[11px] text-[var(--muted)] pb-4">
+        DUEL · Challenge A Better You · data mode: {store.dataMode}
+      </p>
     </div>
   );
 }
 
-function Card({ title, children }: { title?: string; children: React.ReactNode }) {
+function Card({ title, icon, children }: { title: string; icon: string; children: React.ReactNode }) {
   return (
-    <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 sm:p-6 mb-4">
-      {title && <h3 className="font-bold text-[var(--text)] mb-4">{title}</h3>}
-      {children}
-    </div>
+    <section className="bg-[var(--card)] border border-[var(--border)] rounded-2xl overflow-hidden">
+      <h2 className="display text-sm text-[var(--text)] px-5 py-4 border-b border-[var(--border)] flex items-center gap-2">
+        <Icon name={icon} size={16} className="text-[var(--brand)]" /> {title}
+      </h2>
+      <div className="divide-y divide-[var(--border)]">{children}</div>
+    </section>
   );
 }
 
 function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-4 py-3.5 border-b border-[var(--border)] last:border-0 last:pb-0 first:pt-0">
+    <div className="px-5 py-4 flex items-center justify-between gap-4">
       <div className="min-w-0">
         <p className="text-sm font-semibold text-[var(--text)]">{label}</p>
         {hint && <p className="text-xs text-[var(--muted)] mt-0.5">{hint}</p>}
       </div>
       <div className="flex-shrink-0">{children}</div>
     </div>
-  );
-}
-
-const inputCls =
-  'w-full px-4 py-2.5 bg-[var(--card-2)] rounded-xl text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--brand)]/40 placeholder:text-[var(--muted)]';
-
-/* ------------------------------ Account ------------------------------ */
-
-function AccountSection() {
-  const store = useStore();
-  const { me } = store;
-  const [name, setName] = useState(me.name);
-  const [username, setUsername] = useState(me.username);
-  const [email, setEmail] = useState(store.authEmail ?? 'sam@ruhiz.app');
-  const [confirm, setConfirm] = useState<'deactivate' | 'delete' | null>(null);
-
-  const save = () => {
-    const uname = username.trim().toLowerCase();
-    if (name.trim().length < 2) return store.toast('Display name is too short', 'error');
-    if (!/^[a-z0-9_]{3,20}$/.test(uname)) return store.toast('Invalid username format', 'error');
-    store.updateProfile({ name: name.trim(), username: uname });
-    store.toast('Account details saved');
-  };
-
-  return (
-    <>
-      <Card title="Account details">
-        <div className="space-y-4">
-          <label className="block">
-            <span className="block text-xs font-semibold text-[var(--muted)] uppercase tracking-wide mb-1.5">Display name</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} maxLength={40} />
-          </label>
-          <label className="block">
-            <span className="block text-xs font-semibold text-[var(--muted)] uppercase tracking-wide mb-1.5">Username</span>
-            <div className="relative">
-              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--muted)] text-sm">@</span>
-              <input value={username} onChange={(e) => setUsername(e.target.value)} className={`${inputCls} pl-8`} maxLength={20} />
-            </div>
-          </label>
-          <label className="block">
-            <span className="block text-xs font-semibold text-[var(--muted)] uppercase tracking-wide mb-1.5">Email</span>
-            <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" className={inputCls} />
-            <span className="block text-[11px] text-[var(--muted)] mt-1">
-              {store.demoMode ? 'Demo mode — email changes are local only. Connect Supabase auth to verify emails.' : 'Managed by Supabase Auth.'}
-            </span>
-          </label>
-          <button onClick={save} className="px-5 py-2.5 bg-[var(--brand)] text-white text-sm font-semibold rounded-xl hover:bg-[var(--brand-dark)]">
-            Save changes
-          </button>
-        </div>
-      </Card>
-
-      <Card title="Danger zone">
-        <Row label="Reset demo data" hint="Restore sample posts, messages and settings">
-          <button
-            onClick={() => {
-              store.resetDemo();
-              store.toast('Demo data restored ✨');
-            }}
-            className="px-4 py-2 rounded-xl border border-[var(--border)] text-sm font-semibold text-[var(--text)] hover:bg-[var(--card-2)]"
-          >
-            Reset
-          </button>
-        </Row>
-        <Row label="Deactivate account" hint="Temporarily hide your profile">
-          <button onClick={() => setConfirm('deactivate')} className="px-4 py-2 rounded-xl border border-[var(--border)] text-sm font-semibold text-amber-600 hover:bg-amber-500/10">
-            Deactivate
-          </button>
-        </Row>
-        <Row label="Delete account" hint="Permanently remove your Ruhiz presence">
-          <button onClick={() => setConfirm('delete')} className="px-4 py-2 rounded-xl bg-red-600 text-white text-sm font-semibold hover:bg-red-700">
-            Delete
-          </button>
-        </Row>
-      </Card>
-
-      {confirm === 'deactivate' && (
-        <ConfirmModal
-          title="Deactivate your account?"
-          body="Your profile will be hidden until you log back in. Your moments stay safe."
-          confirmLabel="Deactivate"
-          onConfirm={() => store.toast('Account deactivated in demo — log in again to reactivate', 'info')}
-          onClose={() => setConfirm(null)}
-        />
-      )}
-      {confirm === 'delete' && <DeleteAccountModal onClose={() => setConfirm(null)} />}
-    </>
-  );
-}
-
-function DeleteAccountModal({ onClose }: { onClose: () => void }) {
-  const store = useStore();
-  const [typed, setTyped] = useState('');
-  return (
-    <ConfirmModal
-      title="Delete your account?"
-      body="This clears all local demo data, including posts, messages and settings. This cannot be undone."
-      confirmLabel="Delete forever"
-      danger
-      confirmDisabled={typed.trim().toUpperCase() !== 'DELETE'}
-      onConfirm={() => {
-        store.resetDemo();
-        store.toast('All demo data deleted', 'info');
-      }}
-      onClose={onClose}
-    >
-      <div className="mt-3">
-        <p className="text-xs text-[var(--muted)] mb-1.5">Type <b>DELETE</b> to confirm:</p>
-        <input value={typed} onChange={(e) => setTyped(e.target.value)} className={inputCls} placeholder="DELETE" />
-      </div>
-    </ConfirmModal>
-  );
-}
-
-/* ------------------------------ Privacy ------------------------------ */
-
-function PrivacySection() {
-  const store = useStore();
-  const { settings } = store;
-
-  return (
-    <>
-      <Card title="Visibility">
-        <Row label="Profile visibility" hint="Who can view your full profile">
-          <select
-            value={settings.profileVisibility}
-            onChange={(e) => {
-              store.updateSettings({ profileVisibility: e.target.value as typeof settings.profileVisibility });
-              store.toast('Visibility updated', 'info');
-            }}
-            className="px-3 py-2 bg-[var(--card-2)] rounded-xl text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--brand)]/40"
-          >
-            <option value="public">Everyone</option>
-            <option value="connections">Connections only</option>
-            <option value="private">Only me</option>
-          </select>
-        </Row>
-        <Row label="Show activity status" hint="Let others see when you’re online">
-          <Toggle
-            checked={settings.showActivityStatus}
-            onChange={(v) => {
-              store.updateSettings({ showActivityStatus: v });
-              store.toast(v ? 'Activity status on' : 'Activity status hidden', 'info');
-            }}
-            label="Show activity status"
-          />
-        </Row>
-        <Row label="Show read receipts" hint="Let senders know you’ve seen messages">
-          <Toggle checked={settings.showReadReceipts} onChange={(v) => store.updateSettings({ showReadReceipts: v })} label="Read receipts" />
-        </Row>
-      </Card>
-
-      <Card title="Messages">
-        <Row label="Who can message you" hint="Messages from others go to requests first">
-          <select
-            value={settings.allowMessagesFrom}
-            onChange={(e) => {
-              store.updateSettings({ allowMessagesFrom: e.target.value as typeof settings.allowMessagesFrom });
-              store.toast('Message preferences saved', 'info');
-            }}
-            className="px-3 py-2 bg-[var(--card-2)] rounded-xl text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--brand)]/40"
-          >
-            <option value="everyone">Everyone</option>
-            <option value="connections">Connections only</option>
-            <option value="none">No one</option>
-          </select>
-        </Row>
-      </Card>
-
-      <Card title={`Blocked people (${settings.blocked.length})`}>
-        {settings.blocked.length === 0 ? (
-          <p className="text-sm text-[var(--muted)]">You haven’t blocked anyone. Blocked people can’t see or message you.</p>
-        ) : (
-          <div className="space-y-3">
-            {settings.blocked.map((id) => {
-              const u = store.getUser(id);
-              return (
-                <div key={id} className="flex items-center gap-3">
-                  <Avatar user={u} size={40} />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-[var(--text)] truncate">{u.name}</p>
-                    <p className="text-xs text-[var(--muted)]">@{u.username}</p>
-                  </div>
-                  <button
-                    onClick={() => {
-                      store.unblockUser(id);
-                      store.toast(`${u.name} unblocked`);
-                    }}
-                    className="px-3.5 py-1.5 rounded-xl border border-[var(--border)] text-xs font-semibold text-[var(--text)] hover:bg-[var(--card-2)]"
-                  >
-                    Unblock
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </Card>
-    </>
-  );
-}
-
-/* --------------------------- Notifications --------------------------- */
-
-function NotificationsSection() {
-  const store = useStore();
-  const { settings } = store;
-
-  const toggles: { key: keyof typeof settings; label: string; hint: string }[] = [
-    { key: 'notifLikes', label: 'Supports', hint: 'When someone supports your moment' },
-    { key: 'notifComments', label: 'Comments', hint: 'When someone replies to you' },
-    { key: 'notifFollows', label: 'New supporters', hint: 'When someone starts supporting you' },
-    { key: 'notifMessages', label: 'Messages', hint: 'New direct messages' },
-    { key: 'notifMentions', label: 'Mentions', hint: 'When someone mentions you' },
-  ];
-
-  return (
-    <>
-      <Card title="Push notifications">
-        {toggles.map((t) => (
-          <Row key={t.key} label={t.label} hint={t.hint}>
-            <Toggle
-              checked={settings[t.key] as boolean}
-              onChange={(v) => {
-                store.updateSettings({ [t.key]: v } as Partial<typeof settings>);
-                store.toast(`${t.label} notifications ${v ? 'on' : 'off'}`, 'info');
-              }}
-              label={t.label}
-            />
-          </Row>
-        ))}
-      </Card>
-      <Card title="Email digest">
-        <Row label="Community digest" hint="A summary of the best moments from your people">
-          <select
-            value={settings.emailDigest}
-            onChange={(e) => {
-              store.updateSettings({ emailDigest: e.target.value as typeof settings.emailDigest });
-              store.toast('Digest preference saved', 'info');
-            }}
-            className="px-3 py-2 bg-[var(--card-2)] rounded-xl text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--brand)]/40"
-          >
-            <option value="off">Off</option>
-            <option value="daily">Daily</option>
-            <option value="weekly">Weekly</option>
-          </select>
-        </Row>
-      </Card>
-    </>
-  );
-}
-
-/* ----------------------------- Appearance ---------------------------- */
-
-function AppearanceSection() {
-  const store = useStore();
-  const { settings } = store;
-
-  const themes: { value: typeof settings.theme; label: string; icon: string; desc: string }[] = [
-    { value: 'light', label: 'Light', icon: 'sun', desc: 'Ruhiz classic green & white' },
-    { value: 'dark', label: 'Dark', icon: 'moon', desc: 'Easy on late-night eyes' },
-    { value: 'system', label: 'System', icon: 'settings', desc: 'Follow your device' },
-  ];
-
-  return (
-    <>
-      <Card title="Theme">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {themes.map((t) => (
-            <button
-              key={t.value}
-              onClick={() => {
-                store.updateSettings({ theme: t.value });
-                store.toast(`Theme: ${t.label}`, 'info');
-              }}
-              className={`rounded-2xl border-2 p-4 text-left transition-all ${
-                settings.theme === t.value ? 'border-[var(--brand)] bg-[var(--brand-soft)]' : 'border-[var(--border)] hover:border-[var(--brand-mid)]'
-              }`}
-            >
-              <div className="flex items-center gap-2 mb-2">
-                <Icon name={t.icon} size={18} className="text-[var(--brand)]" />
-                <span className="font-semibold text-sm text-[var(--text)]">{t.label}</span>
-                {settings.theme === t.value && <Icon name="check" size={16} className="text-[var(--brand)] ml-auto" />}
-              </div>
-              {/* mini preview */}
-              <div className={`h-14 rounded-lg border ${t.value === 'dark' ? 'bg-[#151d19] border-[#263830]' : 'bg-[#f7f9f7] border-[#e3eae6]'}`}>
-                <div className={`h-4 rounded-t-lg ${t.value === 'dark' ? 'bg-[#0f1b16]' : 'bg-[#145c43]'}`} />
-                <div className="p-1.5 space-y-1">
-                  <div className={`h-1.5 w-3/4 rounded ${t.value === 'dark' ? 'bg-[#263830]' : 'bg-[#dcede4]'}`} />
-                  <div className={`h-1.5 w-1/2 rounded ${t.value === 'dark' ? 'bg-[#263830]' : 'bg-[#dcede4]'}`} />
-                </div>
-              </div>
-              <p className="text-[11px] text-[var(--muted)] mt-2">{t.desc}</p>
-            </button>
-          ))}
-        </div>
-      </Card>
-
-      <Card title="Text size">
-        <div className="flex items-center gap-4">
-          <Segmented
-            options={[
-              { value: 'compact' as const, label: 'Compact' },
-              { value: 'standard' as const, label: 'Standard' },
-              { value: 'large' as const, label: 'Large' },
-            ]}
-            value={settings.fontSize}
-            onChange={(v) => {
-              store.updateSettings({ fontSize: v });
-              store.toast(`Text size: ${v}`, 'info');
-            }}
-          />
-          <span className="text-sm text-[var(--muted)]">Applies everywhere instantly</span>
-        </div>
-      </Card>
-
-      <Card title="Motion">
-        <Row label="Reduce motion" hint="Minimise animations and transitions">
-          <Toggle checked={settings.reduceMotion} onChange={(v) => store.updateSettings({ reduceMotion: v })} label="Reduce motion" />
-        </Row>
-      </Card>
-    </>
-  );
-}
-
-/* ------------------------------ Security ------------------------------ */
-
-function SecuritySection() {
-  const store = useStore();
-  const { settings, sessions } = store;
-  const [current, setCurrent] = useState('');
-  const [next, setNext] = useState('');
-  const [confirmPw, setConfirmPw] = useState('');
-  const [showPw, setShowPw] = useState(false);
-  const [busy, setBusy] = useState(false);
-
-  const changePassword = async () => {
-    if (next.length < 8) return store.toast('New password must be at least 8 characters', 'error');
-    if (next !== confirmPw) return store.toast('Passwords don’t match', 'error');
-    setBusy(true);
-    if (isSupabaseConfigured) {
-      try {
-        const { createClient } = await import('@/lib/supabase/client');
-        const supabase = createClient();
-        const { error } = await supabase.auth.updateUser({ password: next });
-        if (error) {
-          store.toast(error.message, 'error');
-          setBusy(false);
-          return;
-        }
-        store.toast('Password updated 🔐');
-      } catch {
-        store.toast('Could not update password', 'error');
-      }
-    } else {
-      await new Promise((r) => setTimeout(r, 900));
-      store.toast('Password updated (demo mode) 🔐');
-    }
-    setBusy(false);
-    setCurrent('');
-    setNext('');
-    setConfirmPw('');
-  };
-
-  return (
-    <>
-      <Card title="Change password">
-        <div className="space-y-3.5">
-          <input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} placeholder="Current password" className={inputCls} autoComplete="current-password" />
-          <div className="relative">
-            <input
-              type={showPw ? 'text' : 'password'}
-              value={next}
-              onChange={(e) => setNext(e.target.value)}
-              placeholder="New password (min 8 characters)"
-              className={`${inputCls} pr-11`}
-              autoComplete="new-password"
-            />
-            <button onClick={() => setShowPw((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-[var(--muted)] hover:text-[var(--text)]" aria-label="Toggle password visibility">
-              <Icon name={showPw ? 'eyeOff' : 'eye'} size={17} />
-            </button>
-          </div>
-          <input type={showPw ? 'text' : 'password'} value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} placeholder="Confirm new password" className={inputCls} autoComplete="new-password" />
-          <button
-            onClick={changePassword}
-            disabled={busy || !current || !next || !confirmPw}
-            className="px-5 py-2.5 bg-[var(--brand)] text-white text-sm font-semibold rounded-xl hover:bg-[var(--brand-dark)] disabled:opacity-40"
-          >
-            {busy ? 'Updating…' : 'Update password'}
-          </button>
-          {!isSupabaseConfigured && <p className="text-[11px] text-[var(--muted)]">Demo mode — connect Supabase Auth to change your real password.</p>}
-        </div>
-      </Card>
-
-      <Card title="Two-factor authentication">
-        <Row label="2FA" hint="Require a code from your phone when logging in">
-          <Toggle
-            checked={settings.twoFactor}
-            onChange={(v) => {
-              store.updateSettings({ twoFactor: v });
-              store.toast(v ? 'Two-factor authentication enabled 🛡️' : 'Two-factor authentication disabled', v ? 'success' : 'info');
-            }}
-            label="Two-factor authentication"
-          />
-        </Row>
-        <Row label="Login alerts" hint="Get notified about new sign-ins">
-          <Toggle checked={settings.loginAlerts} onChange={(v) => store.updateSettings({ loginAlerts: v })} label="Login alerts" />
-        </Row>
-      </Card>
-
-      <Card title="Active sessions">
-        <div className="space-y-3">
-          {sessions.map((s) => (
-            <div key={s.id} className="flex items-center gap-3 py-2 border-b border-[var(--border)] last:border-0">
-              <div className="w-10 h-10 rounded-xl bg-[var(--brand-soft)] text-[var(--brand)] flex items-center justify-center flex-shrink-0">
-                <Icon name={s.device.toLowerCase().includes('ios') ? 'phone' : 'settings'} size={18} />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-[var(--text)] flex items-center gap-2">
-                  {s.device}
-                  {s.current && <Badge>Current</Badge>}
-                </p>
-                <p className="text-xs text-[var(--muted)]">
-                  {s.location} · {s.current ? 'Active now' : `Active ${timeAgo(s.lastActive)} ago`}
-                </p>
-              </div>
-              {!s.current && (
-                <button
-                  onClick={() => {
-                    store.revokeSession(s.id);
-                    store.toast('Session revoked', 'info');
-                  }}
-                  className="px-3.5 py-1.5 rounded-xl border border-[var(--border)] text-xs font-semibold text-[var(--danger)] hover:bg-[var(--danger-soft)]"
-                >
-                  Revoke
-                </button>
-              )}
-            </div>
-          ))}
-          {sessions.filter((s) => !s.current).length === 0 && (
-            <p className="text-xs text-[var(--muted)]">No other active sessions.</p>
-          )}
-        </div>
-      </Card>
-    </>
   );
 }

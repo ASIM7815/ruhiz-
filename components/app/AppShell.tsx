@@ -1,8 +1,7 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Image from 'next/image';
-import { StoreProvider, useStore } from '@/lib/store';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { StoreProvider, useStore } from '@/lib/duel/store';
 import type { ViewId, ViewRoute } from '@/lib/types';
 import { NavContext } from './nav';
 import TopBar from './TopBar';
@@ -10,18 +9,22 @@ import SideNav from './SideNav';
 import BottomNav from './BottomNav';
 import RightPanel from './RightPanel';
 import Toasts from './Toasts';
-import CreatePostModal from '@/components/post/CreatePostModal';
+import Logo from '@/components/ui/Logo';
 import HomeView from '@/components/views/HomeView';
 import ExploreView from '@/components/views/ExploreView';
-import JourneyView from '@/components/views/JourneyView';
-import ConnectionsView from '@/components/views/ConnectionsView';
-import MessagesView from '@/components/views/MessagesView';
+import CreateChallengeView from '@/components/views/CreateChallengeView';
+import MyChallengesView from '@/components/views/MyChallengesView';
+import ProgressView from '@/components/views/ProgressView';
 import NotificationsView from '@/components/views/NotificationsView';
-import SavedView from '@/components/views/SavedView';
+import MessagesView from '@/components/views/MessagesView';
 import ProfileView from '@/components/views/ProfileView';
 import SettingsView from '@/components/views/SettingsView';
+import ChallengeDetailView from '@/components/views/ChallengeDetailView';
 
-const VALID_VIEWS: ViewId[] = ['home', 'explore', 'journey', 'connections', 'messages', 'notifications', 'saved', 'profile', 'settings'];
+const VALID_VIEWS: ViewId[] = [
+  'home', 'explore', 'create', 'challenges', 'progress',
+  'notifications', 'messages', 'profile', 'settings', 'challenge',
+];
 
 function parseHash(): ViewRoute {
   if (typeof window === 'undefined') return { view: 'home' };
@@ -45,24 +48,32 @@ function ShellInner() {
   const store = useStore();
   const [route, setRoute] = useState<ViewRoute>({ view: 'home' });
   const [splash, setSplash] = useState(true);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [createTab, setCreateTab] = useState<'photo' | 'video' | 'moment' | null>(null);
-  const mainRef = useRef<HTMLDivElement>(null);
 
-  /* boot: parse hash, show brief branded splash */
+  /* boot: parse hash route */
   useEffect(() => {
     setRoute(parseHash());
     const onHash = () => setRoute(parseHash());
     window.addEventListener('hashchange', onHash);
     window.addEventListener('popstate', onHash);
-    const t = window.setTimeout(() => setSplash(false), store.hydrated ? 500 : 900);
     return () => {
       window.removeEventListener('hashchange', onHash);
       window.removeEventListener('popstate', onHash);
-      window.clearTimeout(t);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /* splash until hydrated */
+  useEffect(() => {
+    if (!store.hydrated) return;
+    const t = window.setTimeout(() => setSplash(false), 450);
+    return () => window.clearTimeout(t);
+  }, [store.hydrated]);
+
+  /* auth guard: the app area requires a session */
+  useEffect(() => {
+    if (store.hydrated && !store.authed && !splash) {
+      window.location.replace('/login');
+    }
+  }, [store.hydrated, store.authed, splash]);
 
   const navigate = useCallback((view: ViewId, param?: string) => {
     const next: ViewRoute = { view, param };
@@ -76,64 +87,41 @@ function ShellInner() {
 
   const navApi = useMemo(() => ({ route, navigate }), [route, navigate]);
 
-  const openCreate = useCallback((tab?: 'photo' | 'video' | 'moment') => {
-    setCreateTab(tab ?? null);
-    setCreateOpen(true);
-  }, []);
-
-  /* scroll to highlighted post when arriving via notification */
-  useEffect(() => {
-    if (route.view === 'home' && route.param?.startsWith('post-')) {
-      const id = route.param;
-      const t = window.setTimeout(() => {
-        document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }, 700);
-      return () => window.clearTimeout(t);
-    }
-  }, [route]);
-
-  if (splash) {
+  if (splash || !store.hydrated) {
     return (
-      <div className="min-h-screen bg-[var(--bg)] flex flex-col items-center justify-center gap-4">
-        <Image src="/images/ruhizlogo-.png" alt="Ruhiz" width={160} height={48} className="h-10 w-auto" priority />
+      <div className="min-h-screen bg-black flex flex-col items-center justify-center gap-5">
+        <Logo height={54} priority withTagline />
         <div className="flex gap-1.5">
-          <span className="typing-dot w-2.5 h-2.5 rounded-full bg-[var(--brand)] inline-block" />
-          <span className="typing-dot w-2.5 h-2.5 rounded-full bg-[var(--brand)] inline-block" />
-          <span className="typing-dot w-2.5 h-2.5 rounded-full bg-[var(--brand)] inline-block" />
+          <span className="typing-dot w-2.5 h-2.5 rounded-full bg-[#16e08a] inline-block" />
+          <span className="typing-dot w-2.5 h-2.5 rounded-full bg-[#16e08a] inline-block" />
+          <span className="typing-dot w-2.5 h-2.5 rounded-full bg-[#16e08a] inline-block" />
         </div>
-        <p className="text-sm text-[var(--muted)] italic">Different people. Different stories.</p>
+        <p className="text-sm text-white/50 tracking-[0.25em] uppercase text-[11px]">Challenge a better you</p>
+      </div>
+    );
+  }
+
+  if (!store.authed) {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center">
+        <p className="text-white/60 text-sm">Redirecting to sign in…</p>
       </div>
     );
   }
 
   if (store.authError) {
-    const signOut = async () => {
-      try {
-        const { createClient } = await import('@/lib/supabase/client');
-        await createClient().auth.signOut();
-      } finally {
-        window.location.href = '/login';
-      }
-    };
-
     return (
       <div className="min-h-screen bg-[var(--bg)] flex items-center justify-center px-4">
-        <div className="w-full max-w-xl text-center">
-          <Image src="/images/ruhizlogo-.png" alt="Ruhiz" width={160} height={48} className="h-12 w-auto mx-auto mb-6" priority />
-          <h1 className="text-2xl sm:text-3xl font-semibold text-[var(--text)] mb-3">Live Ruhiz feed unavailable</h1>
-          <p className="text-sm sm:text-base text-[var(--muted)] mb-6">{store.authError}</p>
+        <div className="w-full max-w-xl text-center bg-[var(--card)] border border-[var(--border)] rounded-3xl p-8">
+          <Logo height={36} className="mx-auto mb-6" />
+          <h1 className="text-2xl font-bold text-[var(--text)] mb-3">Live data unavailable</h1>
+          <p className="text-sm text-[var(--muted)] mb-6">{store.authError}</p>
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
-            <button
-              onClick={() => window.location.reload()}
-              className="px-5 py-2.5 rounded-xl bg-[var(--brand)] text-white text-sm font-semibold hover:bg-[var(--brand-dark)]"
-            >
+            <button onClick={() => window.location.reload()} className="px-5 py-2.5 rounded-xl bg-[var(--brand)] text-black text-sm font-bold hover:bg-[var(--brand-dark)]">
               Retry
             </button>
-            <button
-              onClick={signOut}
-              className="px-5 py-2.5 rounded-xl border border-[var(--border)] text-sm font-semibold text-[var(--text)] hover:bg-[var(--card-2)]"
-            >
-              Back to login
+            <button onClick={() => void store.signOut()} className="px-5 py-2.5 rounded-xl border border-[var(--border)] text-sm font-semibold text-[var(--text)] hover:bg-[var(--card-2)]">
+              Back to sign in
             </button>
           </div>
         </div>
@@ -147,43 +135,30 @@ function ShellInner() {
     <NavContext.Provider value={navApi}>
       <div className="min-h-screen bg-[var(--bg)]">
         <TopBar />
-        <SideNav onCreate={() => openCreate()} />
+        <SideNav />
 
         <main
-          ref={mainRef}
-          className={`pt-[64px] min-h-screen transition-all duration-300 md:ml-[76px] lg:ml-[250px] ${
+          className={`pt-[64px] min-h-screen transition-all duration-300 md:ml-[76px] lg:ml-[248px] ${
             showRightPanel ? 'xl:mr-[330px]' : ''
           }`}
         >
           <div className="px-3 sm:px-6 py-5 pb-24 md:pb-8" key={`${route.view}-${route.param ?? ''}`}>
-            {route.view === 'home' && <HomeView onCreate={openCreate} focusPostId={route.param?.startsWith('post-') ? route.param.slice(5) : undefined} />}
+            {route.view === 'home' && <HomeView />}
             {route.view === 'explore' && <ExploreView initialQuery={route.param ?? ''} />}
-            {route.view === 'journey' && <JourneyView onCreate={() => openCreate()} />}
-            {route.view === 'connections' && <ConnectionsView />}
-            {route.view === 'messages' && <MessagesView initialThread={route.param} />}
+            {route.view === 'create' && <CreateChallengeView editId={route.param} />}
+            {route.view === 'challenges' && <MyChallengesView />}
+            {route.view === 'progress' && <ProgressView />}
             {route.view === 'notifications' && <NotificationsView />}
-            {route.view === 'saved' && <SavedView />}
-            {route.view === 'profile' && <ProfileView userId={route.param} onCreate={() => openCreate()} />}
+            {route.view === 'messages' && <MessagesView initialThread={route.param} />}
+            {route.view === 'profile' && <ProfileView userId={route.param} />}
             {route.view === 'settings' && <SettingsView />}
+            {route.view === 'challenge' && <ChallengeDetailView challengeId={route.param ?? ''} />}
           </div>
         </main>
 
         {showRightPanel && <RightPanel />}
-        <BottomNav onCreate={() => openCreate()} />
-
-        <CreatePostModal open={createOpen} initialTab={createTab} onClose={() => setCreateOpen(false)} />
+        <BottomNav />
         <Toasts />
-
-        {/* Floating quick-create on tablet/desktop for muscle memory */}
-        <button
-          onClick={() => openCreate()}
-          className="hidden md:flex lg:hidden fixed bottom-6 right-6 z-[60] w-14 h-14 rounded-full bg-[var(--brand)] text-white items-center justify-center shadow-xl hover:bg-[var(--brand-dark)] transition-colors"
-          aria-label="Create post"
-        >
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path strokeLinecap="round" d="M12 4v16m8-8H4" />
-          </svg>
-        </button>
       </div>
     </NavContext.Provider>
   );

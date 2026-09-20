@@ -1,316 +1,219 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { useStore } from '@/lib/store';
+import { useMemo } from 'react';
+import { useStore } from '@/lib/duel/store';
 import { useNav } from '@/components/app/nav';
 import { Icon } from '@/components/ui/Icons';
-import { Avatar, EmptyState, FeedSkeleton, PrimaryButton } from '@/components/ui/Primitives';
-import PostCard from '@/components/post/PostCard';
-import type { Post } from '@/lib/types';
-import { ME_ID, TOPICS } from '@/lib/data/sample';
-import { PROBLEMS } from '@/lib/recsys/problems';
+import { Cover, EmptyState, FeedSkeleton, PrimaryButton, ProgressBar } from '@/components/ui/Primitives';
+import ChallengeCard from '@/components/challenge/ChallengeCard';
+import { isoDay } from '@/lib/duel/seed';
 
-const PROBLEM_CHIPS = PROBLEMS.slice(0, 8);
-
-type HomeTab = 'for-you' | 'following' | 'photo' | 'video' | 'moment';
-
-const TABS: { id: HomeTab; label: string; icon?: string }[] = [
-  { id: 'for-you', label: 'For You' },
-  { id: 'following', label: 'Supporting' },
-  { id: 'photo', label: 'Photo', icon: 'image' },
-  { id: 'video', label: 'Video', icon: 'video' },
-  { id: 'moment', label: 'Moment', icon: 'pen' },
-];
-
-export default function HomeView({
-  onCreate,
-  focusPostId,
-}: {
-  onCreate: (tab?: 'photo' | 'video' | 'moment') => void;
-  focusPostId?: string;
-}) {
+export default function HomeView() {
   const store = useStore();
-  const { posts, following, getUser, rankedFeed, feedReasons } = store;
   const { navigate } = useNav();
-  const me = store.me;
-  const [tab, setTab] = useState<HomeTab>('for-you');
-  const [topic, setTopic] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const { me, myActive, recommendedViews, db, hydrated } = store;
 
-  // loading state until the store has hydrated (sample data or Supabase)
-  useEffect(() => {
-    if (store.hydrated) {
-      const t = window.setTimeout(() => setLoading(false), 350);
-      return () => window.clearTimeout(t);
-    }
-  }, [store.hydrated]);
+  const bestStreak = useMemo(() => myActive.reduce((m, p) => Math.max(m, p.currentStreak), 0), [myActive]);
+  const checkedToday = myActive.some((p) => p.lastCheckinDate === isoDay(0));
 
-  const switchTab = (next: HomeTab) => {
-    if (next === tab) return;
-    setTab(next);
-    setTopic(null);
-    setLoading(true);
-    window.setTimeout(() => setLoading(false), 350);
-  };
+  const trending = useMemo(
+    () =>
+      db.challenges
+        .filter((c) => c.status === 'open' && !myActive.some((p) => p.challengeId === c.id))
+        .sort((a, b) => b.participantCount + b.likeCount - (a.participantCount + a.likeCount))
+        .slice(0, 4)
+        .map((c) => store.getView(c)),
+    [db.challenges, myActive, store]
+  );
 
-  const refresh = async () => {
-    setRefreshing(true);
-    if (store.dataMode === 'supabase') {
-      await store.refreshPosts();
-      setRefreshing(false);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    } else {
-      window.setTimeout(() => {
-        setRefreshing(false);
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      }, 800);
-    }
-  };
-
-  const filtered = useMemo(() => {
-    let list: Post[];
-    switch (tab) {
-      case 'following':
-        list = posts.filter((p) => p.userId === ME_ID || following.includes(p.userId));
-        break;
-      case 'photo':
-        list = posts.filter((p) => !!p.image);
-        break;
-      case 'video':
-        list = posts.filter((p) => !!p.video);
-        break;
-      case 'moment':
-        list = posts.filter((p) => !p.image && !p.video);
-        break;
-      default:
-        // "For You" — Ruhiz's deterministic recommendation engine:
-        // interest + interaction history + recency + content preferences
-        // + controlled exploration (more discovery for new members).
-        list = rankedFeed.map((r) => r.post);
-    }
-    if (topic) list = list.filter((p) => p.topics.includes(topic) || p.problems.some((pr) => pr.id === topic));
-    return [...list].sort((a, b) =>
-      tab === 'for-you' ? 0 : +new Date(b.createdAt) - +new Date(a.createdAt)
-    );
-  }, [posts, following, tab, topic, rankedFeed]);
+  if (!hydrated) return <FeedSkeleton count={4} />;
 
   return (
-    <div className="max-w-[640px] mx-auto">
-      {/* Welcome banner */}
-      <div
-        className="relative h-[190px] sm:h-[220px] rounded-3xl overflow-hidden mb-5"
-        style={{ backgroundImage: 'url(/images/banner.png)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-      >
-        <div className="absolute inset-0 bg-gradient-to-r from-[#0B3D2E]/85 via-[#0B3D2E]/55 to-transparent" />
-        <div className="relative h-full flex items-center px-7 sm:px-10">
+    <div className="max-w-5xl mx-auto space-y-8 fade-in">
+      {/* Greeting / streak header */}
+      <section className="relative overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--card)] p-6 sm:p-8">
+        <div className="absolute -top-24 -right-24 w-72 h-72 rounded-full bg-[var(--brand)]/10 blur-3xl" />
+        <div className="relative flex flex-col sm:flex-row sm:items-center gap-5">
           <div className="flex-1">
-            <p className="text-white/75 text-[11px] font-semibold tracking-[0.2em] uppercase mb-2">Good to see you here</p>
-            <h1 className="text-white text-3xl sm:text-4xl mb-2">Welcome back, {me.name.split(' ')[0]}!</h1>
-            <p className="text-white/85 text-sm mb-3">A safe space to share, ask, and grow together.</p>
-            <div className="w-14 h-1 bg-[#8FC9A8] rounded-full" />
-          </div>
-          <div className="hidden sm:block text-right text-white/70 italic text-sm">
-            <p className="mb-1">Different people.</p>
-            <p>Different stories.</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Composer trigger */}
-      <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-4 sm:p-5 mb-5">
-        <div className="flex items-center gap-3 mb-3">
-          <Avatar user={me} size={44} onClick={() => navigate('profile')} />
-          <button
-            onClick={() => onCreate()}
-            className="flex-1 px-5 py-3 bg-[var(--card-2)] hover:bg-[var(--brand-soft)] rounded-full text-left text-sm text-[var(--muted)] transition-colors"
-          >
-            What’s on your mind, {me.name.split(' ')[0]}?
-          </button>
-        </div>
-        <div className="flex items-center gap-1.5 sm:gap-2">
-          <ComposerBtn icon="image" label="Photo" onClick={() => onCreate('photo')} />
-          <ComposerBtn icon="video" label="Video" onClick={() => onCreate('video')} />
-          <ComposerBtn icon="pen" label="Moment" onClick={() => onCreate('moment')} />
-          <button
-            onClick={() => onCreate()}
-            className="ml-auto px-5 py-2 bg-[var(--brand)] text-white text-sm font-semibold rounded-xl hover:bg-[var(--brand-dark)] transition-colors"
-          >
-            Post
-          </button>
-        </div>
-      </div>
-
-      {/* Tabs */}
-      <div className="sticky top-[64px] z-20 bg-[var(--bg)]/95 backdrop-blur-sm pt-1 pb-3 -mx-1 px-1">
-        <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide">
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => switchTab(t.id)}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap transition-all ${
-                tab === t.id
-                  ? 'bg-[var(--brand)] text-white shadow-sm'
-                  : 'bg-[var(--card)] text-[var(--muted)] border border-[var(--border)] hover:border-[var(--brand)]'
-              }`}
-            >
-              {t.icon && <Icon name={t.icon} size={15} />}
-              {t.label}
-            </button>
-          ))}
-          <button
-            onClick={() => void refresh()}
-            className="ml-auto flex-shrink-0 p-2 rounded-full bg-[var(--card)] border border-[var(--border)] text-[var(--muted)] hover:text-[var(--brand)] transition-colors"
-            aria-label="Refresh feed"
-            title="Refresh feed"
-          >
-            <Icon name="refresh" size={16} className={refreshing ? 'animate-spin' : ''} />
-          </button>
-        </div>
-
-        {/* Topic chips on For You */}
-        {tab === 'for-you' && (
-          <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide mt-2.5">
-            <button
-              onClick={() => setTopic(null)}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
-                topic === null ? 'bg-[var(--text)] text-[var(--bg)]' : 'bg-[var(--card)] border border-[var(--border)] text-[var(--muted)]'
-              }`}
-            >
-              All topics
-            </button>
-            {PROBLEM_CHIPS.map((p) => (
+            <p className="text-xs font-bold uppercase tracking-[0.2em] text-[var(--brand)] mb-2">Challenge a better you</p>
+            <h1 className="display text-2xl sm:text-4xl text-[var(--text)] leading-tight">
+              {greeting()}, {me?.name?.split(' ')[0]}
+            </h1>
+            <p className="text-sm text-[var(--muted)] mt-2 max-w-md">
+              {myActive.length === 0
+                ? 'You have no active duels. Pick one and start stacking days.'
+                : checkedToday
+                  ? `Checked in today. ${myActive.length} active duel${myActive.length > 1 ? 's' : ''} — see you tomorrow.`
+                  : `${myActive.length} active duel${myActive.length > 1 ? 's' : ''} waiting on today’s check-in.`}
+            </p>
+            <div className="flex flex-wrap gap-2 mt-4">
+              <PrimaryButton onClick={() => navigate('explore')}>
+                <Icon name="explore" size={15} /> Find a challenge
+              </PrimaryButton>
               <button
-                key={p.id}
-                onClick={() => setTopic(topic === p.id ? null : p.id)}
-                className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
-                  topic === p.id ? 'bg-[var(--text)] text-[var(--bg)]' : 'bg-[var(--card)] border border-[var(--border)] text-[var(--muted)] hover:border-[var(--brand)]'
-                }`}
+                onClick={() => navigate('create')}
+                className="px-5 py-2.5 rounded-xl border border-[var(--border)] text-sm font-semibold text-[var(--text)] hover:bg-[var(--card-2)] transition-colors flex items-center gap-2"
               >
-                <span aria-hidden className="mr-1">{p.emoji}</span>
-                {p.label}
+                <Icon name="plus" size={15} /> Create
               </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Feed */}
-      <div className="mt-2">
-        {loading ? (
-          <FeedSkeleton count={3} />
-        ) : filtered.length === 0 ? (
-          <EmptyByTab tab={tab} hasTopic={!!topic} onExplore={() => navigate('explore')} onConnections={() => navigate('connections')} onCreate={() => onCreate()} />
-        ) : (
-          <div className="space-y-5">
-            {filtered.map((p) => (
-              <PostCard key={p.id} post={p} highlight={p.id === focusPostId} reason={tab === 'for-you' ? feedReasons[p.id] : undefined} />
-            ))}
-            <div className="text-center py-6">
-              <p className="text-sm text-[var(--muted)]">You’re all caught up 🌿 Check back soon for new moments.</p>
             </div>
           </div>
+          <div className="grid grid-cols-3 gap-3 sm:w-[280px] w-full">
+            <HeroStat icon="flame" value={String(bestStreak)} label="Day streak" />
+            <HeroStat icon="swords" value={String(myActive.length)} label="Active" />
+            <HeroStat icon="trophy" value={String(store.myCompleted.length)} label="Won" />
+          </div>
+        </div>
+      </section>
+
+      {/* Continue your duels */}
+      {myActive.length > 0 && (
+        <section>
+          <SectionHeader title="Continue your duels" icon="flame" action={{ label: 'My challenges', onClick: () => navigate('challenges') }} />
+          <div className="grid gap-4 sm:grid-cols-2">
+            {myActive.map((p) => {
+              const ch = db.challenges.find((c) => c.id === p.challengeId);
+              if (!ch) return null;
+              const view = store.getView(ch);
+              const dueToday = p.lastCheckinDate !== isoDay(0);
+              return (
+                <button
+                  key={p.challengeId}
+                  onClick={() => navigate('challenge', ch.id)}
+                  className="text-left bg-[var(--card)] border border-[var(--border)] rounded-2xl overflow-hidden hover:border-[var(--brand)]/40 transition-colors"
+                >
+                  <div className="h-20 relative">
+                    <Cover coverUrl={ch.coverUrl} category={view.category} title={ch.title} />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent" />
+                    <p className="absolute bottom-2 left-3 text-white font-bold text-sm display">{ch.title}</p>
+                  </div>
+                  <div className="p-4 space-y-2.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className={`flex items-center gap-1 font-bold ${p.currentStreak > 0 ? 'text-[var(--brand)]' : 'text-[var(--muted)]'}`}>
+                        <Icon name="flame" size={13} className={p.currentStreak > 0 ? 'flame-live' : ''} /> {p.currentStreak}-day streak
+                      </span>
+                      <span className="text-[var(--muted)]">
+                        {p.completedDays}/{ch.durationDays} days
+                      </span>
+                    </div>
+                    <ProgressBar value={p.completedDays} max={ch.durationDays} />
+                    <p className={`text-xs font-semibold ${dueToday ? 'text-[var(--brand)]' : 'text-[var(--muted)]'}`}>
+                      {dueToday ? `Day ${p.completedDays + 1} is open — check in now` : 'Checked in today ✓'}
+                    </p>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* Recommended */}
+      <section>
+        <SectionHeader title="Recommended for you" icon="spark" subtitle="Ranked from your joins, check-ins, saves and searches" />
+        {recommendedViews.length === 0 ? (
+          <EmptyState
+            icon="target"
+            title="No open challenges left to recommend"
+            description="You have joined or completed everything matching your taste. Create the next one!"
+            action={<PrimaryButton onClick={() => navigate('create')}>Create challenge</PrimaryButton>}
+          />
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {recommendedViews.map((v) => (
+              <ChallengeCard key={v.id} view={v} />
+            ))}
+          </div>
         )}
-      </div>
-      <span className="sr-only">{getUser(ME_ID).name}</span>
+      </section>
+
+      {/* Trending */}
+      <section>
+        <SectionHeader title="Trending this week" icon="trending" action={{ label: 'Explore all', onClick: () => navigate('explore') }} />
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {trending.map((v) => (
+            <ChallengeCard key={v.id} view={v} />
+          ))}
+        </div>
+      </section>
+
+      {/* My recent check-ins */}
+      <section className="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5">
+        <SectionHeader title="Latest check-ins" icon="chart" action={{ label: 'Progress', onClick: () => navigate('progress') }} />
+        <ul className="space-y-2.5 mt-3">
+          {db.checkins
+            .filter((c) => c.userId === store.db.meId)
+            .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+            .slice(0, 5)
+            .map((c) => {
+              const ch = db.challenges.find((x) => x.id === c.challengeId);
+              return (
+                <li key={c.id}>
+                  <button onClick={() => navigate('challenge', c.challengeId)} className="w-full flex items-center gap-3 text-left p-2 rounded-xl hover:bg-[var(--card-2)] transition-colors">
+                    <span className="w-9 h-9 rounded-xl bg-[var(--brand-soft)] text-[var(--brand)] font-bold text-xs flex items-center justify-center flex-shrink-0">
+                      D{c.dayNumber}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-semibold text-[var(--text)] truncate">{ch?.title ?? 'Challenge'}</span>
+                      <span className="block text-xs text-[var(--muted)] truncate">{c.note || 'Checked in'}</span>
+                    </span>
+                    <Icon name="arrowRight" size={14} className="text-[var(--muted)]" />
+                  </button>
+                </li>
+              );
+            })}
+          {db.checkins.filter((c) => c.userId === store.db.meId).length === 0 && (
+            <li className="text-sm text-[var(--muted)] py-2">No check-ins yet — your first day starts when you join a challenge.</li>
+          )}
+        </ul>
+      </section>
     </div>
   );
 }
 
-function useStoreScrollTop() {
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+function greeting(): string {
+  const h = new Date().getHours();
+  if (h < 5) return 'Late night grind';
+  if (h < 12) return 'Good morning';
+  if (h < 18) return 'Good afternoon';
+  return 'Good evening';
 }
 
-function ComposerBtn({ icon, label, onClick }: { icon: string; label: string; onClick: () => void }) {
+function HeroStat({ icon, value, label }: { icon: string; value: string; label: string }) {
   return (
-    <button
-      onClick={onClick}
-      className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2.5 rounded-xl hover:bg-[var(--card-2)] transition-colors group"
-    >
-      <Icon name={icon} size={18} className="text-[var(--muted)] group-hover:text-[var(--brand)]" />
-      <span className="text-xs sm:text-sm font-medium text-[var(--muted)] group-hover:text-[var(--brand)]">{label}</span>
-    </button>
+    <div className="bg-[var(--card-2)] border border-[var(--border)] rounded-2xl p-3 text-center">
+      <Icon name={icon} size={16} className="text-[var(--brand)] mx-auto mb-1" />
+      <p className="display text-xl text-[var(--text)]">{value}</p>
+      <p className="text-[10px] text-[var(--muted)] uppercase tracking-wider">{label}</p>
+    </div>
   );
 }
 
-function EmptyByTab({
-  tab,
-  hasTopic,
-  onExplore,
-  onConnections,
-  onCreate,
+export function SectionHeader({
+  title,
+  icon,
+  subtitle,
+  action,
 }: {
-  tab: HomeTab;
-  hasTopic: boolean;
-  onExplore: () => void;
-  onConnections: () => void;
-  onCreate: () => void;
+  title: string;
+  icon?: string;
+  subtitle?: string;
+  action?: { label: string; onClick: () => void };
 }) {
-  if (tab === 'following') {
-    return (
-      <EmptyState
-        icon="people"
-        title="Your Following feed is quiet"
-        description="Follow a few kind humans and their moments will show up here."
-        action={
-          <PrimaryButton onClick={onConnections}>
-            <Icon name="people" size={16} /> Find people to follow
-          </PrimaryButton>
-        }
-      />
-    );
-  }
-  if (hasTopic) {
-    return (
-      <EmptyState
-        icon="explore"
-        title="No moments in this topic yet"
-        description="Try another topic, or be the first to share something about it."
-        action={
-          <PrimaryButton onClick={onCreate}>
-            <Icon name="pen" size={16} /> Share the first moment
-          </PrimaryButton>
-        }
-      />
-    );
-  }
-  const map: Record<string, { icon: string; title: string; desc: string; cta: string }> = {
-    photo: {
-      icon: 'image',
-      title: 'No photos yet',
-      desc: 'Share a photo and it will appear here for everyone to enjoy.',
-      cta: 'Share a photo',
-    },
-    video: {
-      icon: 'video',
-      title: 'No videos yet',
-      desc: 'Upload a short video and it will play right here in the feed.',
-      cta: 'Share a video',
-    },
-    moment: {
-      icon: 'pen',
-      title: 'No written moments yet',
-      desc: 'Words matter. Write what’s on your mind and share it here.',
-      cta: 'Write a moment',
-    },
-    'for-you': {
-      icon: 'spark',
-      title: 'Nothing here yet',
-      desc: 'Be the first to share something with the community.',
-      cta: 'Create a post',
-    },
-  };
-  const m = map[tab] ?? map['for-you'];
   return (
-    <EmptyState
-      icon={m.icon}
-      title={m.title}
-      description={m.desc}
-      action={
-        <PrimaryButton onClick={tab === 'for-you' ? onExplore : onCreate}>
-          <Icon name={m.icon} size={16} /> {m.cta}
-        </PrimaryButton>
-      }
-    />
+    <div className="flex items-end justify-between gap-3 mb-4">
+      <div>
+        <h2 className="display text-lg text-[var(--text)] flex items-center gap-2">
+          {icon && <Icon name={icon} size={18} className="text-[var(--brand)]" />}
+          {title}
+        </h2>
+        {subtitle && <p className="text-xs text-[var(--muted)] mt-0.5">{subtitle}</p>}
+      </div>
+      {action && (
+        <button onClick={action.onClick} className="text-xs font-bold text-[var(--brand)] hover:underline flex-shrink-0">
+          {action.label}
+        </button>
+      )}
+    </div>
   );
 }

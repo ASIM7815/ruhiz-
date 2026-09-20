@@ -1,243 +1,191 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useStore } from '@/lib/store';
+import { useStore } from '@/lib/duel/store';
 import { useNav } from '@/components/app/nav';
 import { Icon } from '@/components/ui/Icons';
-import { Avatar, EmptyState } from '@/components/ui/Primitives';
+import { Avatar, EmptyState, Spinner } from '@/components/ui/Primitives';
 import { clockTime, timeAgo } from '@/lib/format';
 
 export default function MessagesView({ initialThread }: { initialThread?: string }) {
   const store = useStore();
   const { navigate } = useNav();
-  const { threads, typing, onlineIds } = store;
   const [activeId, setActiveId] = useState<string | null>(initialThread ?? null);
-  const [query, setQuery] = useState('');
   const [draft, setDraft] = useState('');
-  const [mobileChatOpen, setMobileChatOpen] = useState(!!initialThread);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const [sending, setSending] = useState(false);
+  const endRef = useRef<HTMLDivElement>(null);
 
-  const sorted = useMemo(
-    () =>
-      [...threads].sort((a, b) => {
-        const la = a.lastMessageAt ?? a.messages.at(-1)?.at ?? '0';
-        const lb = b.lastMessageAt ?? b.messages.at(-1)?.at ?? '0';
-        return lb.localeCompare(la);
-      }),
-    [threads]
+  const threads = useMemo(
+    () => store.threads.slice().sort((a, b) => (b.lastMessageAt ?? '').localeCompare(a.lastMessageAt ?? '')),
+    [store.threads]
   );
-
-  const filteredThreads = query.trim()
-    ? sorted.filter((t) => store.getUser(t.userId).name.toLowerCase().includes(query.toLowerCase()))
-    : sorted;
-
   const active = threads.find((t) => t.id === activeId) ?? null;
-  const activeUser = active ? store.getUser(active.userId) : null;
 
   useEffect(() => {
-    if (initialThread) {
-      setActiveId(initialThread);
-      setMobileChatOpen(true);
-    }
+    if (initialThread) setActiveId(initialThread);
   }, [initialThread]);
 
-  // realtime: join/leave the conversation's typing+presence channel
   useEffect(() => {
-    store.setActiveThread(activeId);
-    return () => store.setActiveThread(null);
+    if (active) store.markThreadRead(active.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeId]);
+  }, [active?.id, active?.messages.length]);
 
   useEffect(() => {
-    if (activeId) store.markThreadRead(activeId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeId, active?.messages.length]);
+    endRef.current?.scrollIntoView({ block: 'end' });
+  }, [active?.messages.length]);
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [active?.messages.length, activeId, typing]);
-
-  const openThread = (id: string) => {
-    setActiveId(id);
-    setMobileChatOpen(true);
-  };
-
-  const send = () => {
+  const send = async () => {
     const text = draft.trim();
-    if (!text || !activeId) return;
-    void store.sendMessage(activeId, text);
-    setDraft('');
+    if (!text || !active) return;
+    setSending(true);
+    const ok = await store.sendMessage(active.id, text);
+    setSending(false);
+    if (ok) setDraft('');
   };
 
-  const isTyping = active ? typing[active.id] : false;
-  const otherOnline = active ? onlineIds.includes(active.userId) || active.online : false;
+  const startWith = async (userId: string) => {
+    const id = await store.openThreadWith(userId);
+    if (id) setActiveId(id);
+  };
+
+  /* ------------------------------ mobile: list ------------------------------ */
+  const listPane = (
+    <div className={`flex-1 min-w-0 ${active ? 'hidden md:flex' : 'flex'} flex-col`}>
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h1 className="display text-2xl text-[var(--text)]">Messages</h1>
+          <p className="text-sm text-[var(--muted)] mt-0.5">Direct messages with other challengers.</p>
+        </div>
+      </div>
+      {threads.length === 0 ? (
+        <EmptyState
+          icon="chat"
+          title="No conversations yet"
+          description="Open a challenge and message its creator, or start from any profile."
+          action={
+            <button onClick={() => navigate('explore')} className="px-5 py-2.5 rounded-xl bg-[var(--brand)] text-black text-sm font-bold hover:bg-[var(--brand-dark)] transition-colors">
+              Find challengers
+            </button>
+          }
+        />
+      ) : (
+        <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl divide-y divide-[var(--border)] overflow-hidden">
+          {threads.map((t) => {
+            const other = store.getUser(t.userId);
+            const last = t.messages.at(-1);
+            return (
+              <button
+                key={t.id}
+                onClick={() => setActiveId(t.id)}
+                className={`w-full flex items-center gap-3 p-4 text-left hover:bg-[var(--card-2)] transition-colors ${activeId === t.id ? 'bg-[var(--card-2)]' : ''}`}
+              >
+                <Avatar user={other} size={46} />
+                <span className="flex-1 min-w-0">
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="font-semibold text-sm text-[var(--text)] truncate">{other.name}</span>
+                    {last && <span className="text-[10px] text-[var(--muted)] flex-shrink-0">{timeAgo(last.at)}</span>}
+                  </span>
+                  <span className={`block text-xs truncate mt-0.5 ${t.unread > 0 ? 'text-[var(--text)] font-semibold' : 'text-[var(--muted)]'}`}>
+                    {last ? `${last.fromMe ? 'You: ' : ''}${last.text}` : 'Say hello 👋'}
+                  </span>
+                </span>
+                {t.unread > 0 && (
+                  <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-[var(--brand)] text-black text-[11px] font-bold flex items-center justify-center flex-shrink-0">
+                    {t.unread}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* quick start */}
+      <div className="mt-5">
+        <p className="text-xs font-bold uppercase tracking-wider text-[var(--muted)] mb-2">Start a conversation</p>
+        <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
+          {Object.values(store.db.profiles)
+            .filter((p) => p.id !== store.db.meId && !threads.some((t) => t.userId === p.id))
+            .slice(0, 10)
+            .map((p) => (
+              <button
+                key={p.id}
+                onClick={() => void startWith(p.id)}
+                className="flex items-center gap-2 px-3 py-2 rounded-full bg-[var(--card)] border border-[var(--border)] text-xs font-semibold text-[var(--text)] hover:border-[var(--brand)]/50 transition-colors flex-shrink-0"
+              >
+                <Avatar user={p} size={20} /> {p.name}
+              </button>
+            ))}
+        </div>
+      </div>
+    </div>
+  );
+
+  /* ----------------------------- mobile: thread ----------------------------- */
+  const threadPane = active && (
+    <div className={`flex-1 min-w-0 ${active ? 'flex' : 'hidden md:flex'} flex-col bg-[var(--card)] border border-[var(--border)] rounded-2xl overflow-hidden`}>
+      <div className="flex items-center gap-3 p-4 border-b border-[var(--border)]">
+        <button onClick={() => setActiveId(null)} className="md:hidden p-2 rounded-lg hover:bg-[var(--card-2)] text-[var(--muted)]" aria-label="Back to conversations">
+          <Icon name="back" size={17} />
+        </button>
+        <Avatar user={store.getUser(active.userId)} size={40} onClick={() => navigate('profile', active.userId)} />
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold text-sm text-[var(--text)] truncate">{store.getUser(active.userId).name}</p>
+          <p className="text-[11px] text-[var(--muted)]">@{store.getUser(active.userId).username}</p>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-[320px] max-h-[52vh] md:max-h-[calc(100vh-320px)]">
+        {active.messages.length === 0 && (
+          <p className="text-center text-sm text-[var(--muted)] py-8">No messages yet — start the duel talk.</p>
+        )}
+        {active.messages.map((m) => (
+          <div key={m.id} className={`flex ${m.fromMe ? 'justify-end' : 'justify-start'}`}>
+            <div
+              className={`max-w-[78%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
+                m.fromMe ? 'bg-[var(--brand)] text-black rounded-br-md' : 'bg-[var(--card-2)] text-[var(--text)] rounded-bl-md'
+              }`}
+            >
+              <p className="break-words">{m.text}</p>
+              <p className={`text-[10px] mt-1 ${m.fromMe ? 'text-black/60' : 'text-[var(--muted)]'}`}>{clockTime(m.at)}</p>
+            </div>
+          </div>
+        ))}
+        <div ref={endRef} />
+      </div>
+
+      <div className="p-3 border-t border-[var(--border)] flex items-end gap-2">
+        <textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value.slice(0, 2000))}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              void send();
+            }
+          }}
+          rows={1}
+          placeholder="Write a message…"
+          aria-label="Message text"
+          className="flex-1 bg-[var(--card-2)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-sm text-[var(--text)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-[var(--brand)]/60 resize-none max-h-32"
+        />
+        <button
+          onClick={() => void send()}
+          disabled={sending || !draft.trim()}
+          className="p-3 rounded-xl bg-[var(--brand)] text-black hover:bg-[var(--brand-dark)] transition-colors disabled:opacity-50"
+          aria-label="Send message"
+        >
+          {sending ? <Spinner size={17} /> : <Icon name="send" size={17} />}
+        </button>
+      </div>
+    </div>
+  );
 
   return (
-    <div className="max-w-[900px] mx-auto">
-      <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl overflow-hidden flex h-[calc(100dvh-180px)] md:h-[calc(100dvh-140px)]">
-        {/* Thread list */}
-        <div className={`w-full md:w-[300px] lg:w-[330px] border-r border-[var(--border)] flex-col flex-shrink-0 ${mobileChatOpen ? 'hidden md:flex' : 'flex'}`}>
-          <div className="p-4 border-b border-[var(--border)]">
-            <h2 className="text-lg font-bold text-[var(--text)] mb-3">Messages</h2>
-            <div className="relative">
-              <Icon name="search" size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search conversations…"
-                className="w-full pl-9 pr-3 py-2 bg-[var(--card-2)] rounded-xl text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--brand)]/40 placeholder:text-[var(--muted)]"
-              />
-            </div>
-          </div>
-          <div className="flex-1 overflow-y-auto">
-            {filteredThreads.length === 0 && (
-              <p className="text-sm text-[var(--muted)] text-center py-8 px-4">No conversations found. Say hello to someone from Connections!</p>
-            )}
-            {filteredThreads.map((t) => {
-              const u = store.getUser(t.userId);
-              const last = t.messages.at(-1);
-              const online = onlineIds.includes(t.userId) || t.online;
-              return (
-                <button
-                  key={t.id}
-                  onClick={() => openThread(t.id)}
-                  className={`w-full flex items-center gap-3 px-4 py-3.5 text-left transition-colors ${
-                    activeId === t.id ? 'bg-[var(--brand-soft)]' : 'hover:bg-[var(--card-2)]'
-                  }`}
-                >
-                  <div className="relative flex-shrink-0">
-                    <Avatar user={u} size={46} />
-                    {online && <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-green-500 ring-2 ring-[var(--card)]" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className={`text-sm truncate ${t.unread ? 'font-bold text-[var(--text)]' : 'font-semibold text-[var(--text)]'}`}>{u.name}</p>
-                      {last && <span className="text-[10px] text-[var(--muted)] flex-shrink-0">{timeAgo(last.at)}</span>}
-                    </div>
-                    <p className={`text-xs truncate ${t.unread ? 'text-[var(--text)] font-semibold' : 'text-[var(--muted)]'}`}>
-                      {typing[t.id] ? 'typing…' : last ? `${last.fromMe ? 'You: ' : ''}${last.text}` : 'Start the conversation 👋'}
-                    </p>
-                  </div>
-                  {t.unread > 0 && (
-                    <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-[var(--brand)] text-white text-[11px] font-bold flex items-center justify-center flex-shrink-0">
-                      {t.unread}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Chat pane */}
-        <div className={`flex-1 flex-col min-w-0 ${mobileChatOpen ? 'flex' : 'hidden md:flex'}`}>
-          {!active || !activeUser ? (
-            <div className="flex-1 flex items-center justify-center p-6">
-              <EmptyState icon="chat" title="Your messages" description="Pick a conversation or start a new one from Connections." />
-            </div>
-          ) : (
-            <>
-              {/* Chat header */}
-              <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--border)]">
-                <button onClick={() => setMobileChatOpen(false)} className="md:hidden p-1.5 rounded-full hover:bg-[var(--card-2)] text-[var(--muted)]" aria-label="Back to chats">
-                  <Icon name="back" size={18} />
-                </button>
-                <Avatar user={activeUser} size={40} onClick={() => navigate('profile', activeUser.id)} />
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-sm text-[var(--text)] truncate">{activeUser.name}</p>
-                  <p className="text-xs text-[var(--muted)]">
-                    {isTyping
-                      ? 'typing…'
-                      : activeUser.persona
-                      ? 'Community member · replies with care 💚'
-                      : otherOnline
-                      ? 'Active now'
-                      : 'Offline'}
-                  </p>
-                </div>
-                <button onClick={() => navigate('profile', activeUser.id)} className="p-2 rounded-full hover:bg-[var(--card-2)] text-[var(--muted)]" aria-label="View profile">
-                  <Icon name="user" size={18} />
-                </button>
-              </div>
-
-              {/* Messages */}
-              <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
-                {active.messages.length === 0 && (
-                  <div className="text-center py-10">
-                    <Avatar user={activeUser} size={64} className="mx-auto mb-3" />
-                    <p className="font-semibold text-[var(--text)]">{activeUser.name}</p>
-                    <p className="text-xs text-[var(--muted)] mt-1">This is the beginning of your conversation. Be kind 💚</p>
-                  </div>
-                )}
-                {active.messages.map((m, i) => {
-                  const isLastMine = m.fromMe && !active.messages.slice(i + 1).some((x) => x.fromMe);
-                  const read =
-                    store.settings.showReadReceipts &&
-                    isLastMine &&
-                    !!active.otherLastReadAt &&
-                    active.otherLastReadAt >= m.at;
-                  return (
-                  <div key={m.id} className={`flex ${m.fromMe ? 'justify-end' : 'justify-start'} fade-in`}>
-                    <div
-                      className={`max-w-[75%] px-4 py-2.5 rounded-3xl text-sm leading-relaxed whitespace-pre-wrap break-words ${
-                        m.fromMe
-                          ? 'bg-[var(--brand)] text-white rounded-br-lg'
-                          : 'bg-[var(--card-2)] text-[var(--text)] rounded-bl-lg'
-                      } ${m.pending ? 'opacity-70' : ''}`}
-                    >
-                      {m.text}
-                      <div className={`text-[10px] mt-1 flex items-center gap-1 justify-end ${m.fromMe ? 'text-white/70' : 'text-[var(--muted)]'}`}>
-                        {clockTime(m.at)}
-                        {m.fromMe && !m.pending && (
-                          <span title={read ? 'Read' : 'Sent'}>
-                            <Icon name="check" size={11} className={read ? 'text-white' : 'text-white/50'} />
-                            {read ? ' Read' : ' Sent'}
-                          </span>
-                        )}
-                        {m.pending && <span> Sending…</span>}
-                      </div>
-                    </div>
-                  </div>
-                  );
-                })}
-                {isTyping && (
-                  <div className="flex justify-start">
-                    <div className="bg-[var(--card-2)] rounded-3xl rounded-bl-lg px-4 py-3 flex gap-1.5 items-center">
-                      <span className="typing-dot w-2 h-2 rounded-full bg-[var(--muted)] inline-block" />
-                      <span className="typing-dot w-2 h-2 rounded-full bg-[var(--muted)] inline-block" />
-                      <span className="typing-dot w-2 h-2 rounded-full bg-[var(--muted)] inline-block" />
-                    </div>
-                  </div>
-                )}
-                <div ref={bottomRef} />
-              </div>
-
-              {/* Composer */}
-              <div className="p-3 border-t border-[var(--border)]">
-                <div className="flex items-center gap-2">
-                  <input
-                    value={draft}
-                    onChange={(e) => {
-                      setDraft(e.target.value);
-                      store.sendTyping(active.id);
-                    }}
-                    onKeyDown={(e) => e.key === 'Enter' && send()}
-                    placeholder={`Message ${activeUser.name.split(' ')[0]}…`}
-                    className="flex-1 px-4 py-2.5 bg-[var(--card-2)] rounded-full text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--brand)]/40 placeholder:text-[var(--muted)]"
-                  />
-                  <button
-                    onClick={send}
-                    disabled={!draft.trim()}
-                    className="p-2.5 rounded-full bg-[var(--brand)] text-white disabled:opacity-40 hover:bg-[var(--brand-dark)] transition-colors"
-                    aria-label="Send message"
-                  >
-                    <Icon name="send" size={17} />
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
+    <div className="max-w-5xl mx-auto fade-in">
+      <div className="flex gap-5 items-start">
+        {listPane}
+        {threadPane}
       </div>
     </div>
   );
