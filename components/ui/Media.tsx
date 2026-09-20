@@ -128,6 +128,7 @@ export function R2Video({
   mediaKey,
   className,
   controls = true,
+  autoPlay = false,
   onPlay,
   onPause,
   onEnded,
@@ -138,6 +139,7 @@ export function R2Video({
   mediaKey?: string | null;
   className?: string;
   controls?: boolean;
+  autoPlay?: boolean;
   onPlay?: () => void;
   onPause?: () => void;
   onEnded?: () => void;
@@ -263,6 +265,7 @@ export function R2Video({
       poster={poster ?? undefined}
       className={className}
       controls={controls}
+      autoPlay={autoPlay}
       muted={muted}
       playsInline
       preload="metadata"

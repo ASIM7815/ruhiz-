@@ -264,32 +264,6 @@ drop table if exists public.blocks             cascade;
 
 drop table if exists public.notifications      cascade;
 
--- personas get DUEL-flavoured bios (mental-health copy is retired)*
-
-update public.profiles
-
-   set bio = case username
-
-       when 'aya_builds'     then 'Frontend engineer. 3 challenges completed, 0 excuses.'
-
-       when 'marcuslifts'    then 'Strength coach. I program the challenges I wish existed.'
-
-       when 'lina_reads'     then '41 books last year. Ask me for a rec, I dare you.'
-
-       when 'kenji_offgrid'  then 'Deleted every social app in 2025. Never looked back.'
-
-       when 'priya_flow'     then 'Meditation teacher. 10 minutes counts. Show up.'
-
-       when 'diego_maps'     then 'Trail runner & cartographer. The map is never finished.'
-
-       when 'sara_compounds' then 'Personal finance nerd. Automate everything.'
-
-       when 'tomas_draws'    then 'Illustrator. One sketch a day keeps the rust away.'
-
-       else bio end
-
- where is_persona;
-
 -- ============================================================================*
 
 -- 2. DUEL SCHEMA*
@@ -392,7 +366,11 @@ create table if not exists public.challenge_checkins (
 
   checkin_date date not null default current_date,
 
-  note         text not null default '' check (char_length(note) <= 500),
+  note         text not null default '' check (char_length(note) <= 2000),
+
+  media_url    text,
+
+  media_type   text check (media_type in ('image', 'video')),
 
   created_at   timestamptz not null default now(),
 
@@ -401,6 +379,10 @@ create table if not exists public.challenge_checkins (
   unique (challenge_id, user_id, checkin_date)
 
 );
+
+alter table public.challenge_checkins add column if not exists media_url text;
+
+alter table public.challenge_checkins add column if not exists media_type text check (media_type in ('image', 'video'));
 
 create table if not exists public.challenge_likes (
 
@@ -858,7 +840,13 @@ create trigger trg_duel_apply_checkin before insert on public.challenge_checkins
 
 /** Server-side check-in entry point used by the app (returns fresh state). */
 
-create or replace function public.duel_checkin(p_challenge_id uuid, p_note text default '')
+create or replace function public.duel_checkin(
+  p_challenge_id uuid,
+  p_note text default '',
+  p_media_url text default null,
+  p_media_type text default null,
+  p_day_number int default null
+)
 
 returns jsonb
 
@@ -872,20 +860,26 @@ declare
 
   ck    public.challenge_checkins%rowtype;
 
+  target_day int;
+
 begin
 
   if me is null then raise exception 'not signed in'; end if;
 
-  insert into public.challenge_checkins (challenge_id, user_id, day_number, checkin_date, note)
+  if p_day_number is not null then
+    target_day := p_day_number;
+  else
+    select coalesce(max(day_number), 0) + 1 into target_day
+      from public.challenge_checkins
+     where challenge_id = p_challenge_id and user_id = me;
+  end if;
 
-  select p_challenge_id, me,
-
-         (select coalesce(max(day_number), 0) + 1 from public.challenge_checkins
-
-           where challenge_id = p_challenge_id and user_id = me),
-
-         current_date, coalesce(p_note, '')
-
+  insert into public.challenge_checkins (challenge_id, user_id, day_number, checkin_date, note, media_url, media_type)
+  values (p_challenge_id, me, target_day, current_date, coalesce(p_note, ''), p_media_url, p_media_type)
+  on conflict (challenge_id, user_id, day_number) do update set
+    note = coalesce(excluded.note, challenge_checkins.note),
+    media_url = coalesce(excluded.media_url, challenge_checkins.media_url),
+    media_type = coalesce(excluded.media_type, challenge_checkins.media_type)
   returning * into ck;
 
   select * into part from public.challenge_participants
@@ -896,7 +890,10 @@ begin
 
     'checkin', jsonb_build_object('id', ck.id, 'challenge_id', ck.challenge_id, 'day_number', ck.day_number,
 
-                                  'checkin_date', ck.checkin_date, 'note', ck.note, 'created_at', ck.created_at),
+                                  'checkin_date', ck.checkin_date, 'note', ck.note,
+                                  'media_url', ck.media_url, 'media_type', ck.media_type,
+
+                                  'created_at', ck.created_at),
 
     'participation', jsonb_build_object('challenge_id', part.challenge_id, 'status', part.status,
 
@@ -1480,6 +1477,12 @@ create policy checkins_delete on public.challenge_checkins for delete
 
   using (user_id = public.duel_current_profile_id());
 
+drop policy if exists checkins_update on public.challenge_checkins;
+
+create policy checkins_update on public.challenge_checkins for update
+
+  using (user_id = public.duel_current_profile_id());
+
 -- likes / saves / shares / comments*
 
 drop policy if exists likes_read on public.challenge_likes;
@@ -1706,114 +1709,7 @@ on conflict (id) do update
 
        tagline = excluded.tagline, sort = excluded.sort;
 
--- community personas (login-less profiles used to seed a live community)
--- NOTE: usernames intentionally use only letters, numbers and underscores to satisfy common profiles_username_shape constraints.*
-
-insert into public.profiles (user_id, username, display_name, avatar_hue, bio, location, verified, is_persona) values
-
-  (null, 'aya_builds',     'Aya Rahman',    190, 'Frontend engineer. 3 challenges completed, 0 excuses.', 'Dhaka', true, true),
-
-  (null, 'marcuslifts',    'Marcus Cole',    20, 'Strength coach. I program the challenges I wish existed.', 'Austin, TX', true, true),
-
-  (null, 'lina_reads',     'Lina Petrova',  265, '41 books last year. Ask me for a rec, I dare you.', 'Sofia', false, true),
-
-  (null, 'kenji_offgrid',  'Kenji Sato',    350, 'Deleted every social app in 2025. Never looked back.', 'Kyoto', false, true),
-
-  (null, 'priya_flow',     'Priya Nair',    150, 'Meditation teacher. 10 minutes counts. Show up.', 'Bengaluru', true, true),
-
-  (null, 'diego_maps',     'Diego Fuentes', 170, 'Trail runner & cartographer. The map is never finished.', 'Bogotá', false, true),
-
-  (null, 'sara_compounds', 'Sara Kim',       45, 'Personal finance nerd. Automate everything.', 'Seoul', false, true),
-
-  (null, 'tomas_draws',    'Tomás Silva',   320, 'Illustrator. One sketch a day keeps the rust away.', 'Lisbon', false, true)
-
-on conflict do nothing;
-
--- starter challenges (creator resolved by username; skipped once present)*
-
-insert into public.challenges
-
-  (creator_id, title, description, category_id, duration_days, difficulty, daily_task, cover_url, tags,
-
-   participant_count, like_count, save_count, share_count, view_count, completion_count, created_at)
-
-select p.id, v.title, v.description, v.category_id, v.duration_days, v.difficulty, v.daily_task, v.cover_url, v.tags::text[],
-
-       v.participant_count, v.like_count, v.save_count, v.share_count, v.view_count, v.completion_count,
-
-       now() - (v.age_days || ' days')::interval
-
-  from (values
-
-    ('aya_builds',     '30 Days Coding',            'Write code every day for 30 days. One commit, one snippet, one bug fixed — it all counts. The only rule is that the editor opens daily.', 'coding', 30, 'medium', 'Commit code or solve one problem, then log what you built.', '/images/covers/coding.jpg', '{programming,consistency,commits}', 1284, 642, 311, 88, 9210, 402, 64),
-
-    ('marcuslifts',    '21 Days Fitness',           'Three weeks of daily movement: strength, cardio or mobility. Sessions are 30–45 minutes and scale from beginner to athlete.', 'fitness', 21, 'hard', 'Complete a 30+ minute training session and note the workout.', '/images/covers/fitness.jpg', '{training,strength,cardio}', 2140, 1187, 540, 143, 15400, 806, 58),
-
-    ('kenji_offgrid',  '7 Days No Social Media',    'A full week off Instagram, TikTok, X and Facebook. Messenger and calls are fine. Expect day 2 to be rough — that is the point.', 'detox', 7, 'hard', 'Zero social media apps. Log the urge you resisted and what you did instead.', '/images/covers/detox.jpg', '{attention,dopamine,reset}', 3310, 2015, 980, 402, 22100, 1893, 51),
-
-    ('lina_reads',     '30 Days Reading',           'Twenty pages or twenty minutes a day, whichever comes first. Fiction, non-fiction, papers — reading is reading.', 'reading', 30, 'easy', 'Read 20+ pages and write one sentence about them.', '/images/covers/reading.jpg', '{books,focus,habits}', 1755, 903, 465, 97, 11800, 712, 47),
-
-    ('priya_flow',     '14 Days Meditation',        'Ten quiet minutes every morning for two weeks. Guided or silent — the practice is sitting down on purpose.', 'mindfulness', 14, 'easy', 'Meditate for 10 minutes and rate your focus 1–5.', '/images/covers/mindfulness.jpg', '{meditation,calm,morning}', 1420, 811, 377, 76, 8600, 640, 44),
-
-    ('aya_builds',     '45 Days LeetCode Grind',    'One algorithmic problem a day for 45 days. Easy on Mondays, medium midweek, hard on weekends. Interview season proof-of-work.', 'coding', 45, 'hard', 'Solve and submit one problem; link or name it in your check-in.', null, '{algorithms,interviews,dsa}', 860, 402, 288, 51, 6100, 187, 40),
-
-    ('priya_flow',     '7 Days 5AM Club',           'Up at 05:00 for seven straight days, phones stay out of the bedroom. The first hour of the day belongs to you.', 'nutrition', 7, 'medium', 'Wake at 05:00 and log your wake time plus first-hour activity.', null, '{sleep,discipline,morning}', 1130, 522, 240, 64, 7400, 431, 36),
-
-    ('marcuslifts',    '30 Days No Added Sugar',    'Cut added sugar for a month. Whole fruit is in, sweetened drinks and desserts are out. Read labels like a detective.', 'nutrition', 30, 'hard', 'Log meals and confirm zero added sugar today.', '/images/covers/nutrition.jpg', '{nutrition,energy,reset}', 990, 468, 301, 58, 6800, 289, 33),
-
-    ('lina_reads',     '14 Days Journaling',        'One page, longhand, every night. No structure required — brain dump, gratitude list, or a rerun of the day.', 'mindfulness', 14, 'easy', 'Write one journal page and note the prompt or topic.', null, '{writing,reflection,evening}', 760, 355, 199, 33, 4300, 341, 30),
-
-    ('sara_compounds', '21 Days Budget Control',    'Track every single expense for three weeks and review one spending category daily. Awareness first, cuts second.', 'finance', 21, 'medium', 'Log all expenses and review one budget category.', null, '{money,tracking,discipline}', 640, 289, 214, 29, 3900, 233, 27),
-
-    ('tomas_draws',    '30 Days Drawing',           'One sketch a day for 30 days. Ugly sketches welcome — volume is the strategy. Prompts posted in the comments.', 'creativity', 30, 'medium', 'Finish one sketch and describe or attach it.', '/images/covers/creativity.jpg', '{art,sketching,practice}', 830, 476, 260, 44, 5200, 251, 24),
-
-    ('diego_maps',     '7 Days 10K Steps',          'Ten thousand steps a day for a week. Walks, hikes, pacing while on calls — the counter does not judge.', 'fitness', 7, 'easy', 'Hit 10,000 steps and log the count.', null, '{walking,cardio,simple}', 1980, 890, 402, 121, 12600, 1104, 21),
-
-    ('marcuslifts',    '30 Days Hydration',         'Three litres of water a day for a month. Bottle on the desk, glass on the nightstand — engineer your environment.', 'nutrition', 30, 'easy', 'Drink 3L water and tick it off.', null, '{hydration,energy,simple}', 1510, 610, 333, 71, 8900, 688, 18),
-
-    ('aya_builds',     '14 Days Ship It',           'Build and deploy a side project in two weeks. Day 14 ends with a public URL and a write-up. Scope small, ship real.', 'coding', 14, 'hard', 'Push project work forward and note today’s milestone.', null, '{sideproject,deploy,build}', 540, 301, 187, 46, 3600, 122, 15),
-
-    ('diego_maps',     '30 Days Spanish',           'Twenty minutes of Spanish daily: vocabulary, listening, or talking to yourself in the shower. Consistency beats intensity.', 'language', 30, 'medium', '20 minutes of study; log 10 new words or a lesson.', '/images/covers/learning.jpg', '{spanish,vocabulary,daily}', 910, 405, 251, 39, 5600, 268, 12),
-
-    ('diego_maps',     '7 Days Outside',            'Thirty minutes outdoors every day for a week, in any weather. Daylight is a supplement you can’t buy in a bottle.', 'outdoors', 7, 'easy', 'Spend 30+ minutes outside and note where you went.', null, '{nature,daylight,walks}', 720, 322, 158, 27, 4100, 388, 9),
-
-    ('marcuslifts',    '90 Days Marathon Base',     'A twelve-week base-building block: four runs a week with a progressive long run. Check-ins log mileage, not feelings.', 'fitness', 90, 'hard', 'Complete the scheduled run and log distance + pace.', null, '{running,endurance,plan}', 410, 214, 176, 22, 2900, 61, 6),
-
-    ('kenji_offgrid',  '14 Days Deep Work',         'One 90-minute distraction-free block daily: phone in another room, one tab, one task. Measure depth, not hours.', 'mindfulness', 14, 'medium', 'Finish a 90-minute zero-interruption block and name the task.', null, '{focus,productivity,monkmode}', 1265, 704, 388, 95, 8100, 497, 3)
-
-  ) as v(username, title, description, category_id, duration_days, difficulty, daily_task, cover_url, tags,
-
-         participant_count, like_count, save_count, share_count, view_count, completion_count, age_days)
-
-  join public.profiles p on p.username = v.username
-
- where not exists (select 1 from public.challenges c where c.title = v.title);
-
--- seed comments on a few challenges so pages feel alive*
-
-insert into public.challenge_comments (challenge_id, user_id, body, created_at)
-
-select c.id, p.id, v.body, now() - (v.age_days || ' days')::interval
-
-  from (values
-
-    ('30 Days Coding', 'marcuslifts', 'Day 12 done. The daily commit rule is brutal in the best way.', 4),
-
-    ('30 Days Coding', 'lina_reads', 'Joined yesterday — pairing this with the reading challenge keeps evenings screen-light.', 2),
-
-    ('7 Days No Social Media', 'priya_flow', 'Third time running this one. Day 2 itch is real, day 5 quiet is worth it.', 6),
-
-    ('21 Days Fitness', 'diego_maps', 'Scaled sessions to 30 min and still cooked. Great programming, Marcus.', 3),
-
-    ('30 Days Reading', 'tomas_draws', '20 pages before breakfast changed my mornings completely.', 1)
-
-  ) as v(title, username, body, age_days)
-
-  join public.challenges c on c.title = v.title
-
-  join public.profiles p on p.username = v.username
-
- where not exists (select 1 from public.challenge_comments cc where cc.challenge_id = c.id and cc.body = v.body);
+-- Real users create real challenges on DUEL. No fake personas or demo posts are seeded.
 
 commit;
 

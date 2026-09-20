@@ -56,6 +56,8 @@ export interface Checkin {
   dayNumber: number; // 1-based day of the challenge for this user
   date: string; // yyyy-mm-dd
   note: string;
+  mediaUrl?: string | null;
+  mediaType?: 'image' | 'video' | null;
   createdAt: string;
 }
 

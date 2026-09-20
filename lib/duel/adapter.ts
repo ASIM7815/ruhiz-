@@ -30,7 +30,13 @@ export interface DuelAdapter {
   deleteChallenge(id: string): Promise<void>;
   joinChallenge(id: string): Promise<void>;
   leaveChallenge(id: string): Promise<void>;
-  checkin(challengeId: string, note: string): Promise<Checkin>;
+  checkin(
+    challengeId: string,
+    note: string,
+    mediaUrl?: string | null,
+    mediaType?: 'image' | 'video' | null,
+    dayNumber?: number
+  ): Promise<Checkin>;
   toggleLike(id: string): Promise<boolean>;
   toggleSave(id: string): Promise<boolean>;
   shareChallenge(id: string): Promise<void>;
