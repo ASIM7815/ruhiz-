@@ -125,19 +125,26 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     });
     (async () => {
       try {
+        console.log('[BOOTSTRAP] Starting bootstrap...');
         const res = await adapter.bootstrap();
+        console.log('[BOOTSTRAP] Result:', { authed: res.authed, error: res.error, meId: res.db.meId });
         if (cancelled) return;
         setDb(res.db);
         setAuthed(res.authed);
+        console.log('[BOOTSTRAP] Set authed to:', res.authed);
         if (res.error) setAuthError(res.error);
         if (res.pendingMigration) setDataMode('supabase-pending-migration');
         else setDataMode(isSupabaseConfigured ? 'supabase' : 'demo');
       } catch (err: any) {
+        console.error('[BOOTSTRAP] Error:', err);
         if (cancelled) return;
         setAuthError(err?.message ?? 'Could not load DUEL data.');
         if (isSupabaseConfigured) setDataMode('supabase-error');
       } finally {
-        if (!cancelled) setHydrated(true);
+        if (!cancelled) {
+          console.log('[BOOTSTRAP] Setting hydrated to true');
+          setHydrated(true);
+        }
       }
     })();
     return () => {
@@ -273,9 +280,14 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         setAuthed(true);
         return;
       }
+      console.log('[SIGNIN] Attempting signInWithPassword...');
       const { createClient } = await import('@/lib/supabase/client');
       const { error } = await createClient().auth.signInWithPassword({ email, password });
-      if (error) throw new Error(error.message);
+      if (error) {
+        console.error('[SIGNIN] Error:', error);
+        throw new Error(error.message);
+      }
+      console.log('[SIGNIN] Success! Redirecting to /feed with hard reload...');
       window.location.href = '/feed';
     },
     [adapter]

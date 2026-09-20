@@ -20,7 +20,11 @@ function LoginInner() {
   const [success, setSuccess] = useState(searchParams?.get('verified') === 'true' ? 'Email confirmed — welcome back. Sign in to continue.' : '');
 
   useEffect(() => {
-    if (store.hydrated && store.authed) router.replace('/feed');
+    console.log('[LOGIN PAGE] Store state:', { hydrated: store.hydrated, authed: store.authed });
+    if (store.hydrated && store.authed) {
+      console.log('[LOGIN PAGE] User is authenticated, redirecting to /feed');
+      router.replace('/feed');
+    }
   }, [store.hydrated, store.authed, router]);
 
   const submit = async (e: React.FormEvent) => {

@@ -63,71 +63,122 @@ export class SupabaseAdapter implements DuelAdapter {
   /* ------------------------------ bootstrap ----------------------------- */
 
   async bootstrap(): Promise<BootstrapResult> {
+    console.log('[SUPABASE BOOTSTRAP] Starting...');
     this.sb = safeClient();
-    if (!this.sb) return { db: clone(this.db), authed: false };
+    if (!this.sb) {
+      console.log('[SUPABASE BOOTSTRAP] No client available, returning unauthed');
+      return { db: clone(this.db), authed: false };
+    }
     const { data } = await this.sb.auth.getSession();
+    console.log('[SUPABASE BOOTSTRAP] Session:', data?.session ? 'EXISTS' : 'NULL', 'User:', data?.session?.user?.email);
     const user = data?.session?.user;
-    if (!user) return { db: clone(this.db), authed: false };
+    if (!user) {
+      console.log('[SUPABASE BOOTSTRAP] No user in session, returning unauthed');
+      return { db: clone(this.db), authed: false };
+    }
 
-    const profile = await ensureProfile(this.sb, user);
+    console.log('[SUPABASE BOOTSTRAP] User found, ensuring profile...');
+    
+    // Try to ensure profile, but don't fail auth if this fails
+    let profile;
+    try {
+      profile = await ensureProfile(this.sb, user);
+      console.log('[SUPABASE BOOTSTRAP] Profile ensured:', profile.username);
+    } catch (err) {
+      console.error('[SUPABASE BOOTSTRAP] Failed to ensure profile:', err);
+      // User is authenticated even if profile load fails
+      return { 
+        db: clone(this.db), 
+        authed: true, 
+        error: 'Could not load your profile. Some features may not work.' 
+      };
+    }
+    
     this.profileId = profile.id;
     this.ids = new IdMapper(profile.id);
     this.db.meId = ME_APP_ID;
 
-    const [profileRows, catRows, chRows, partRows, ckRows, cmRows, likeRows, saveRows, actRows, searchRows, notifRows] =
-      await Promise.all([
-        this.sb.from('profiles').select('*'),
-        this.sb.from('duel_categories').select('*').order('sort'),
-        this.sb.from('challenges').select('*').order('created_at', { ascending: false }).limit(400),
-        this.sb.from('challenge_participants').select('*').eq('user_id', profile.id),
-        this.sb.from('challenge_checkins').select('*').eq('user_id', profile.id).order('checkin_date', { ascending: false }).limit(800),
-        this.sb.from('challenge_comments').select('*').order('created_at', { ascending: true }).limit(1500),
-        this.sb.from('challenge_likes').select('challenge_id').eq('user_id', profile.id),
-        this.sb.from('challenge_saves').select('challenge_id').eq('user_id', profile.id),
-        this.sb.from('activities').select('*').eq('user_id', profile.id).order('created_at', { ascending: false }).limit(800),
-        this.sb.from('searches').select('*').eq('user_id', profile.id).order('created_at', { ascending: false }).limit(200),
-        this.sb.from('notifications').select('*').eq('user_id', profile.id).order('created_at', { ascending: false }).limit(80),
-      ]);
+    // Load data - if these fail, user is STILL authenticated, just with empty data
+    let profileRows, catRows, chRows, partRows, ckRows, cmRows, likeRows, saveRows, actRows, searchRows, notifRows;
+    
+    try {
+      [profileRows, catRows, chRows, partRows, ckRows, cmRows, likeRows, saveRows, actRows, searchRows, notifRows] =
+        await Promise.all([
+          this.sb.from('profiles').select('*'),
+          this.sb.from('duel_categories').select('*').order('sort'),
+          this.sb.from('challenges').select('*').order('created_at', { ascending: false }).limit(400),
+          this.sb.from('challenge_participants').select('*').eq('user_id', profile.id),
+          this.sb.from('challenge_checkins').select('*').eq('user_id', profile.id).order('checkin_date', { ascending: false }).limit(800),
+          this.sb.from('challenge_comments').select('*').order('created_at', { ascending: true }).limit(1500),
+          this.sb.from('challenge_likes').select('challenge_id').eq('user_id', profile.id),
+          this.sb.from('challenge_saves').select('challenge_id').eq('user_id', profile.id),
+          this.sb.from('activities').select('*').eq('user_id', profile.id).order('created_at', { ascending: false }).limit(800),
+          this.sb.from('searches').select('*').eq('user_id', profile.id).order('created_at', { ascending: false }).limit(200),
+          this.sb.from('notifications').select('*').eq('user_id', profile.id).order('created_at', { ascending: false }).limit(80),
+        ]);
 
-    for (const [label, res] of [
-      ['profiles', profileRows], ['categories', catRows], ['challenges', chRows],
-    ] as const) {
-      if ((res as any).error) throw (res as any).error;
-      void label;
+      // Log any errors but don't throw
+      for (const [label, res] of [
+        ['profiles', profileRows], ['categories', catRows], ['challenges', chRows],
+      ] as const) {
+        if ((res as any).error) {
+          console.error(`[SUPABASE BOOTSTRAP] Error loading ${label}:`, (res as any).error);
+        }
+      }
+      if (partRows?.error) {
+        console.error('[SUPABASE BOOTSTRAP] Error loading participants:', partRows.error);
+      }
+    } catch (err) {
+      console.error('[SUPABASE BOOTSTRAP] Error loading data:', err);
+      // Return authenticated but with minimal data
+      this.db = {
+        ...emptyDB(),
+        meId: ME_APP_ID,
+        profiles: { [ME_APP_ID]: mapProfile(profile, this.ids) },
+      };
+      return { 
+        db: clone(this.db), 
+        authed: true, 
+        error: 'Could not load DUEL data. Database migration may be pending.' 
+      };
     }
-    if (partRows.error) throw partRows.error;
 
     const profiles: Record<string, UserProfile> = {};
-    for (const row of profileRows.data ?? []) {
+    for (const row of profileRows?.data ?? []) {
       const mapped = mapProfile(row, this.ids);
       profiles[mapped.id] = mapped;
       if (!row.user_id) this.ids.register(row.id, row.id);
     }
     profiles[ME_APP_ID] = mapProfile(profile, this.ids);
 
-    const challengeIds = (chRows.data ?? []).map((r: any) => r.id as string);
-    const commentRows = challengeIds.length
-      ? await this.sb.from('challenge_comments').select('*').in('challenge_id', challengeIds).order('created_at', { ascending: true })
-      : { data: [] as any[], error: null };
+    const challengeIds = (chRows?.data ?? []).map((r: any) => r.id as string);
+    let commentRows = { data: [] as any[], error: null };
+    if (challengeIds.length) {
+      try {
+        commentRows = await this.sb.from('challenge_comments').select('*').in('challenge_id', challengeIds).order('created_at', { ascending: true });
+      } catch (err) {
+        console.error('[SUPABASE BOOTSTRAP] Error loading comments:', err);
+      }
+    }
 
     this.db = {
       ...emptyDB(),
       meId: ME_APP_ID,
       profiles,
-      categories: (catRows.data ?? []).map(mapCategory),
-      challenges: (chRows.data ?? []).map(mapChallenge).map((c: Challenge) => ({ ...c, creatorId: this.ids.app(c.creatorId) })),
-      participants: (partRows.data ?? []).map((r: any) => mapParticipation(r, this.ids)),
-      checkins: (ckRows.data ?? []).map((r: any) => mapCheckin(r, this.ids)),
-      comments: (commentRows.data ?? []).map((r: any) => mapComment(r, this.ids)),
-      likes: (likeRows.data ?? []).map((r: any) => ({ challengeId: r.challenge_id, userId: ME_APP_ID, createdAt: r.created_at })),
-      saves: (saveRows.data ?? []).map((r: any) => ({ challengeId: r.challenge_id, userId: ME_APP_ID, createdAt: r.created_at })),
+      categories: (catRows?.data ?? []).map(mapCategory),
+      challenges: (chRows?.data ?? []).map(mapChallenge).map((c: Challenge) => ({ ...c, creatorId: this.ids.app(c.creatorId) })),
+      participants: (partRows?.data ?? []).map((r: any) => mapParticipation(r, this.ids)),
+      checkins: (ckRows?.data ?? []).map((r: any) => mapCheckin(r, this.ids)),
+      comments: (commentRows?.data ?? []).map((r: any) => mapComment(r, this.ids)),
+      likes: (likeRows?.data ?? []).map((r: any) => ({ challengeId: r.challenge_id, userId: ME_APP_ID, createdAt: r.created_at })),
+      saves: (saveRows?.data ?? []).map((r: any) => ({ challengeId: r.challenge_id, userId: ME_APP_ID, createdAt: r.created_at })),
       shares: [],
-      activities: (actRows.data ?? []).map((r: any) => ({
+      activities: (actRows?.data ?? []).map((r: any) => ({
         id: r.id, userId: ME_APP_ID, action: r.action, challengeId: r.challenge_id ?? undefined,
         categoryId: r.category_id ?? undefined, bucket: r.bucket ?? undefined, query: r.query ?? undefined, createdAt: r.created_at,
       })),
-      searches: (searchRows.data ?? []).map((r: any) => ({ id: r.id, userId: ME_APP_ID, query: r.query, createdAt: r.created_at })),
-      notifications: (notifRows.data ?? []).map((r: any) => mapNotification(r, this.ids)),
+      searches: (searchRows?.data ?? []).map((r: any) => ({ id: r.id, userId: ME_APP_ID, query: r.query, createdAt: r.created_at })),
+      notifications: (notifRows?.data ?? []).map((r: any) => mapNotification(r, this.ids)),
       threads: [],
       settings: { ...defaultSettings(), ...(profile.settings ?? {}) },
     };
@@ -135,12 +186,14 @@ export class SupabaseAdapter implements DuelAdapter {
     try {
       const bundles = await loadConversations(this.sb, profile.id);
       this.db.threads = bundles.map((b) => ({ ...b.thread, userId: this.ids.app(b.otherProfileId) })) as Thread[];
-    } catch {
+    } catch (err) {
+      console.error('[SUPABASE BOOTSTRAP] Error loading conversations:', err);
       this.db.threads = [];
     }
 
     this.emit();
     this.subscribeRealtime();
+    console.log('[SUPABASE BOOTSTRAP] Complete! Returning authed = true');
     return { db: clone(this.db), authed: true };
   }
 
