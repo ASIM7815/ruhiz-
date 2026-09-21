@@ -24,7 +24,7 @@ export function PostCard({
       className="group relative w-full aspect-[9/14] rounded-2xl overflow-hidden bg-[var(--card-2)] border border-[var(--border)] hover:border-[var(--brand)]/50 transition-colors text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
       aria-label={`Post by @${post.authorUsername} — ${post.challengeTitle}, day ${post.dayNumber}`}
     >
-      {post.mediaType === 'video' ? (
+      {post.mediaUrl && post.mediaType === 'video' ? (
         <video
           src={post.mediaUrl}
           className="absolute inset-0 w-full h-full object-cover"
@@ -33,9 +33,17 @@ export function PostCard({
           preload="metadata"
           tabIndex={-1}
         />
-      ) : (
+      ) : post.mediaUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={post.mediaUrl} alt="" loading="lazy" className="absolute inset-0 w-full h-full object-cover" />
+      ) : (
+        /* written entry — no photo/video attached */
+        <div className="absolute inset-0 bg-gradient-to-br from-[var(--brand-soft)] via-[var(--card-2)] to-black/60 flex flex-col justify-center p-4">
+          <Icon name="pen" size={20} className="text-[var(--brand)] mb-2" />
+          <p className="text-[13px] leading-relaxed text-[var(--text)] line-clamp-[8] whitespace-pre-wrap">
+            {post.note || 'Progress logged.'}
+          </p>
+        </div>
       )}
 
       {/* gradient + overlays */}
@@ -155,10 +163,20 @@ export function PostLightbox({ post, onClose }: { post: FeedPost; onClose: () =>
         <div className="grid md:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)] gap-0 md:max-h-[85vh]">
         {/* media */}
         <div className="relative bg-black rounded-t-2xl md:rounded-t-none md:rounded-l-2xl overflow-hidden flex items-center justify-center min-h-[280px] md:min-h-[520px]">
-          {post.mediaType === 'video' ? (
-            <R2Video mediaKey={post.mediaUrl} controls autoPlay className="w-full h-full max-h-[85vh] object-contain" />
+          {post.mediaUrl ? (
+            post.mediaType === 'video' ? (
+              <R2Video mediaKey={post.mediaUrl} controls autoPlay className="w-full h-full max-h-[85vh] object-contain" />
+            ) : (
+              <R2Image mediaKey={post.mediaUrl} alt={post.note || post.challengeTitle} className="w-full h-full max-h-[85vh] object-contain" />
+            )
           ) : (
-            <R2Image mediaKey={post.mediaUrl} alt={post.note || post.challengeTitle} className="w-full h-full max-h-[85vh] object-contain" />
+            /* written entry — no photo/video attached */
+            <div className="w-full h-full min-h-[280px] md:min-h-[520px] flex flex-col justify-center gap-4 p-8 bg-gradient-to-br from-[var(--brand-soft)] via-black/40 to-black/80">
+              <Icon name="pen" size={28} className="text-[var(--brand)]" />
+              <p className="text-[15px] leading-relaxed text-white/95 whitespace-pre-wrap break-words">
+                {post.note || 'Progress logged.'}
+              </p>
+            </div>
           )}
           <span className="absolute top-3 left-3 px-3 py-1 rounded-full bg-black/70 backdrop-blur text-white text-[12px] font-bold display flex items-center gap-1.5">
             <Icon name="calendar" size={12} className="text-[var(--brand)]" /> DAY {post.dayNumber}

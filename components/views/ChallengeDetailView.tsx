@@ -22,7 +22,6 @@ import CheckinModal from '@/components/challenge/CheckinModal';
 import CommentsPanel from '@/components/challenge/CommentsPanel';
 import { PostCard, PostLightbox } from '@/components/challenge/PostCard';
 import ChallengeTimeline from '@/components/challenge/ChallengeTimeline';
-import CreatePostModal from '@/components/challenge/CreatePostModal';
 import { compactCount, fullDate } from '@/lib/format';
 import { isoDay } from '@/lib/duel/seed';
 import { calculatePerformance, type DayTimelineItem, type PerformanceReport } from '@/lib/duel/performance';
@@ -39,7 +38,6 @@ export default function ChallengeDetailView({ challengeId }: { challengeId: stri
   const [menuOpen, setMenuOpen] = useState(false);
   const [timelineFilter, setTimelineFilter] = useState<'all' | 'completed' | 'missed' | 'pending'>('all');
   const [lightboxItem, setLightboxItem] = useState<{ checkin: Checkin; dayNumber: number } | null>(null);
-  const [createPostDay, setCreatePostDay] = useState<number | null>(null);
 
   const view = store.findById(challengeId);
 
@@ -115,6 +113,30 @@ export default function ChallengeDetailView({ challengeId }: { challengeId: stri
     return calculatePerformance(view, activeParticipation, relevantCheckins);
   }, [view, activeParticipation, relevantCheckins]);
 
+  /** The viewer's own entry for a day (used when the timeline asks to edit). */
+  const myCheckinForDay = (day: number): Checkin | null =>
+    store.db.checkins.find(
+      (c) => c.challengeId === challengeId && c.userId === store.db.meId && c.dayNumber === day
+    ) ?? null;
+
+  /**
+   * Where the member stands right now:
+   *  todayDay — the day whose calendar date is today (the open slot), and
+   *  nextDay  — the day a new check-in should target.
+   */
+  const timelineMeta = useMemo<{ todayDay: number | null; nextDay: number | null }>(() => {
+    if (!myPart || !view) return { todayDay: null, nextDay: null };
+    const pending = performance.timeline.find((item) => item.status === 'pending');
+    const logged = performance.timeline
+      .filter((item) => item.status === 'completed')
+      .map((item) => item.dayNumber);
+    const afterLast = (logged.length ? Math.max(...logged) : 0) + 1;
+    return {
+      todayDay: pending?.dayNumber ?? null,
+      nextDay: Math.min(view.durationDays, Math.max(1, pending?.dayNumber ?? afterLast)),
+    };
+  }, [myPart, performance.timeline, view]);
+
   if (!view) {
     return (
       <EmptyState
@@ -139,7 +161,7 @@ export default function ChallengeDetailView({ challengeId }: { challengeId: stri
     if (threadId) navigate('messages', threadId);
   };
 
-  const openCheckinForDay = (day: number, existing?: Checkin) => {
+  const openCheckinForDay = (day: number, existing?: Checkin | null) => {
     setCheckinDay(day);
     setEditingCheckin(existing ?? null);
     setCheckinOpen(true);
@@ -526,17 +548,20 @@ export default function ChallengeDetailView({ challengeId }: { challengeId: stri
         )}
       </section>
 
-      {/* Comments Panel */}
-      <CommentsPanel challengeId={view.id} />
-
-      {/* Challenge Timeline - Real Posts */}
+      {/* Day-by-day timeline: every member's real entries for this duel */}
       <ChallengeTimeline
         challengeId={challengeId}
         durationDays={view.durationDays}
-        isParticipant={!!myPart}
-        userId={store.db.meId}
-        onCreatePost={(dayNumber) => setCreatePostDay(dayNumber)}
+        isParticipant={Boolean(myPart)}
+        meId={store.db.meId}
+        todayDay={timelineMeta.todayDay}
+        nextDay={timelineMeta.nextDay}
+        onOpenDay={(dayNumber) => openCheckinForDay(dayNumber, myCheckinForDay(dayNumber))}
+        onEditEntry={(checkin) => openCheckinForDay(checkin.dayNumber, checkin)}
       />
+
+      {/* Comments Panel */}
+      <CommentsPanel challengeId={view.id} />
 
       {/* Similar challenges in category */}
       {similar.length > 0 && (
@@ -571,21 +596,6 @@ export default function ChallengeDetailView({ challengeId }: { challengeId: stri
           challengeTitle={view.title}
           author={activeUser}
           onClose={() => setLightboxItem(null)}
-        />
-      )}
-
-      {/* Create Post Modal */}
-      {createPostDay && (
-        <CreatePostModal
-          challengeId={challengeId}
-          challengeTitle={view.title}
-          dayNumber={createPostDay}
-          onClose={() => setCreatePostDay(null)}
-          onSuccess={() => {
-            setCreatePostDay(null);
-            // Refresh timeline by triggering a re-render
-            window.location.reload();
-          }}
         />
       )}
     </div>

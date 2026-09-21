@@ -69,7 +69,13 @@ export interface ChallengeComment {
   createdAt: string;
 }
 
-/** A public progress post (challenge_checkins row) enriched for social feeds. */
+/**
+ * A public progress post (challenge_checkins row) enriched for social feeds.
+ *
+ * Media is optional: a check-in may be a written entry only. Discovery feeds
+ * (Explore) filter to entries that carry media, while a challenge's own
+ * timeline shows every entry — caption-only days included.
+ */
 export interface FeedPost {
   id: string;
   challengeId: string;
@@ -85,8 +91,8 @@ export interface FeedPost {
   dayNumber: number;
   date: string; // yyyy-mm-dd
   note: string;
-  mediaUrl: string;
-  mediaType: 'image' | 'video';
+  mediaUrl: string | null;
+  mediaType: 'image' | 'video' | null;
   createdAt: string;
   likeCount: number;
   commentCount: number;

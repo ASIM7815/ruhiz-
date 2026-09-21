@@ -534,8 +534,9 @@ export class SupabaseAdapter implements DuelAdapter {
       .from('challenge_checkins')
       .select('*')
       .eq('challenge_id', challengeId)
-      .order('created_at', { ascending: false })
-      .limit(250);
+      .order('day_number', { ascending: true })
+      .order('created_at', { ascending: true })
+      .limit(500);
     if (error) throw error;
     // my-liked flags for these posts
     let liked: string[] = [];
@@ -547,9 +548,12 @@ export class SupabaseAdapter implements DuelAdapter {
       liked = (likes ?? []).map((l: any) => l.checkin_id);
     }
     const cat = ch ? this.db.categories.find((c) => c.id === ch.categoryId) : undefined;
-    return (data as any[])
-      .filter((r) => r.media_url && r.media_type)
-      .map((r) => ({
+    // Media is optional: caption-only entries still belong on the challenge
+    // timeline even though they never surface in media discovery feeds.
+    return (data as any[]).map((r) => {
+      const authorId = this.ids.app(r.user_id);
+      const author = this.db.profiles[authorId];
+      return {
         id: r.id,
         challengeId: r.challenge_id,
         challengeTitle: ch?.title ?? '',
@@ -557,21 +561,22 @@ export class SupabaseAdapter implements DuelAdapter {
         categoryId: ch?.categoryId ?? '',
         categoryName: cat?.name ?? '',
         categoryEmoji: cat?.emoji ?? '•',
-        authorId: this.ids.app(r.user_id),
-        authorName: this.db.profiles[this.ids.app(r.user_id)]?.name ?? 'DUEL member',
-        authorUsername: this.db.profiles[this.ids.app(r.user_id)]?.username ?? 'duelist',
-        authorAvatar: this.db.profiles[this.ids.app(r.user_id)]?.avatar ?? null,
+        authorId,
+        authorName: author?.name ?? 'DUEL member',
+        authorUsername: author?.username ?? 'duelist',
+        authorAvatar: author?.avatar ?? null,
         dayNumber: r.day_number,
         date: r.checkin_date,
         note: r.note ?? '',
-        mediaUrl: r.media_url,
-        mediaType: r.media_type,
+        mediaUrl: r.media_url ?? null,
+        mediaType: r.media_type ?? null,
         createdAt: r.created_at,
         likeCount: r.like_count ?? 0,
         commentCount: r.comment_count ?? 0,
         iLiked: liked.includes(r.id),
         isMine: r.user_id === this.profileId,
-      }));
+      };
+    });
   }
 
   async togglePostLike(postId: string): Promise<boolean> {

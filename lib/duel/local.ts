@@ -623,8 +623,8 @@ export class LocalAdapter implements DuelAdapter {
       dayNumber: ck.dayNumber,
       date: ck.date,
       note: ck.note,
-      mediaUrl: ck.mediaUrl!,
-      mediaType: ck.mediaType!,
+      mediaUrl: ck.mediaUrl ?? null,
+      mediaType: ck.mediaType ?? null,
       createdAt: ck.createdAt,
       likeCount: this.postLikeCount(ck.id),
       commentCount: this.postCommentCount(ck.id),
@@ -715,10 +715,12 @@ export class LocalAdapter implements DuelAdapter {
   async loadChallengePosts(challengeId: string): Promise<FeedPost[]> {
     const me = this.db.meId;
     const likedIds = new Set(this.db.postLikes.filter((l) => l.userId === me).map((l) => l.checkinId));
+    // Every entry counts here (media is optional) — this powers the
+    // challenge's own day-by-day timeline, not the media discovery feed.
     return this.db.checkins
-      .filter((c) => c.challengeId === challengeId && c.mediaUrl && c.mediaType)
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .slice(0, 250)
+      .filter((c) => c.challengeId === challengeId)
+      .sort((a, b) => a.dayNumber - b.dayNumber || a.createdAt.localeCompare(b.createdAt))
+      .slice(0, 500)
       .map((ck) => this.mapLocalPost(ck, likedIds));
   }
 

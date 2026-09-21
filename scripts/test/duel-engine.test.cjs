@@ -207,6 +207,34 @@ function ok(name, cond) {
   ok('photo proofs query returns real photos', allPhotoProofs.length >= 1);
   ok('no fake posts in database', db.checkins.every((c) => c.userId === me || c.userId === bobId));
 
+  console.log('\n7b) challenge timeline (day-by-day entries for every member)');
+  // Bob logs a written-only day (no photo/video) — timeline must still show it.
+  const bobCk2 = await adapter.checkin(ch.id, 'Day 2 from Bob: wrote the test plan and reviewed PRs.', null, null, 2);
+  ok('caption-only entry recorded', bobCk2.dayNumber === 2 && bobCk2.mediaUrl === null);
+
+  let timeline = await adapter.loadChallengePosts(ch.id);
+  ok('timeline lists every member entry (4 real entries)', timeline.length === 4);
+  ok('timeline is ordered by day then time', timeline.every((p, i) => i === 0 || timeline[i - 1].dayNumber <= p.dayNumber));
+  ok('day 1 carries both members', timeline.filter((p) => p.dayNumber === 1).length === 2);
+  const captionOnly = timeline.find((p) => p.id === bobCk2.id);
+  ok('caption-only entry appears on the timeline', Boolean(captionOnly) && captionOnly.mediaUrl === null);
+  ok('timeline marks the viewer’s own entries', captionOnly.isMine === true);
+  ok('timeline marks someone else’s entries', timeline.some((p) => p.isMine === false));
+  ok('author identity resolved for every entry', timeline.every((p) => p.authorUsername.length > 0 && p.authorName.length > 0));
+
+  const exploreFeed = await adapter.loadFeed({ mediaType: 'all', categoryId: null, query: '', sort: 'latest', page: 0 });
+  ok('media discovery feed excludes caption-only entries', !exploreFeed.posts.some((p) => p.id === bobCk2.id));
+  ok('media discovery feed still shows proof posts', exploreFeed.posts.length >= 3);
+
+  const likedCaptionOnly = await adapter.togglePostLike(bobCk2.id);
+  await adapter.addPostComment(bobCk2.id, 'Respect — two days deep already.');
+  timeline = await adapter.loadChallengePosts(ch.id);
+  const refreshed = timeline.find((p) => p.id === bobCk2.id);
+  ok('timeline like registered', likedCaptionOnly === true && refreshed.likeCount === 1 && refreshed.iLiked === true);
+  ok('timeline comment registered', refreshed.commentCount === 1);
+  const thread = await adapter.loadPostComments(bobCk2.id);
+  ok('timeline comment is readable', thread.length === 1 && thread[0].text.includes('two days deep'));
+
   console.log('\n8) ownership & permission validation');
   threw = false;
   try {

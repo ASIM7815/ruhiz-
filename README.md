@@ -63,6 +63,25 @@ With no `NEXT_PUBLIC_SUPABASE_*` env vars the app runs in **preview mode**: acco
 challenges, check-ins and streaks persist in the browser and a seeded community reacts
 to your actions, so the entire product is testable end-to-end without a backend.
 
+### One entry, every surface
+
+A check-in (`challenge_checkins`) *is* the post. The same row powers the streak engine,
+the challenge's day-by-day timeline, the Explore media feed and profile grids — so the
+social layer can never drift away from the progress data:
+
+- `loadChallengePosts(challengeId)` → every entry of a duel in day order (media optional,
+  caption-only days included). This drives the **Day-by-Day Timeline** in the challenge
+  detail view.
+- `loadFeed(...)` → the same rows filtered to entries that carry a photo/video, ranked
+  for discovery (Explore).
+- Posting and editing always go through the check-in flow (`CheckinModal` → `checkin()`):
+  one entry per member per day. Likes and comments are stored per check-in
+  (`checkin_likes` / `checkin_comments`) and are shared by every surface.
+
+In production `duel_checkin()` inserts the row and lets the `trg_duel_apply_checkin`
+trigger own streaks/completion; when the day already has an entry the RPC updates just
+the note/media, so editing proof never re-runs the streak maths.
+
 ## Getting started
 
 ```bash
@@ -81,6 +100,9 @@ npm run dev
    schema (categories, challenges, participants, checkins, likes, saves, shares,
    comments, activities, searches, affinity, recommendations, notifications) with
    indexes, constraints, triggers and RLS, and seeds 10 categories + 18 challenges.
+   Then apply `supabase/migrations/20260922200000_fix_checkin_engine.sql` — it restores
+   the thin, edit-aware `duel_checkin()` RPC (an earlier branch had copied the streak
+   engine into the function, which made every check-in fail against the trigger).
 3. **Media:** add the four `R2_*` vars + bucket CORS for permanent cover/avatar uploads
    (presigned PUT, MIME allow-list, 8 MB cap, user-scoped keys).
 
@@ -89,11 +111,26 @@ npm run dev
 - SSR session middleware protects `/feed`; logged-in users are bounced from `/login`.
 - RLS on every DUEL table; counters/streaks/completion maintained by DB triggers.
 - Uploads: server-minted presigned URLs bound to key + content-type, size/MIME caps.
-- Validation everywhere (forms, check-in once per day, ownership checks on edit/delete).
+- Validation everywhere (forms, check-in once per day, ownership checks on edit/delete,
+  media type required whenever media is attached).
 - Loading skeletons, empty states, error toasts, optimistic UI with rollback on failure.
 - SEO metadata, OpenGraph/Twitter cards, favicon set, theme-color, semantic headings.
 - Responsive: desktop side nav + right rail, tablet, and mobile bottom nav with a
   center create action.
+
+## Tests
+
+```bash
+npm test        # engine + UI suites, no browser required
+```
+
+- `scripts/test/duel-engine.test.cjs` — 64 assertions over the local adapter: signup,
+  challenges, check-ins, streaks, performance scoring, feed ranking, timeline ordering,
+  likes/comments and permissions.
+- `scripts/test/timeline-ui.test.cjs` — renders the real `ChallengeDetailView` in jsdom
+  against the real store, then asserts the day-by-day timeline shows every entry
+  (photo and caption-only), that likes reach the shared snapshot, and that "Edit entry"
+  opens the pre-filled check-in modal.
 
 ## Layout
 
@@ -106,7 +143,8 @@ components/ui/        icons, primitives, logo, media resolver
 lib/duel/             types, seed, recommendation engine, adapters, store
 lib/supabase/         browser / server / middleware clients
 lib/r2/               Cloudflare R2 client
-supabase/migrations/  20260920000000_duel_platform.sql (RUHIZ → DUEL)
+supabase/migrations/  duel_platform (RUHIZ → DUEL), fix_checkin_engine,
+                      legacy challenge_posts migrations (schema kept, unused)
 supabase/duel/        INSPECT_BEFORE_MIGRATION.sql
 public/images/        official logo artwork + generated category covers
 ```
