@@ -24,7 +24,7 @@ import { createClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
 
-const KEY_PATTERN = /^(posts|avatars|chats|covers)\/[A-Za-z0-9_-]+\/\d{4}-\d{2}\/[0-9a-fA-F-]{10,40}\.[A-Za-z0-9]{2,5}$/;
+const KEY_PATTERN = /^(posts|avatars|chats|covers|proofs)\/[A-Za-z0-9_-]+\/\d{4}-\d{2}\/[0-9a-fA-F-]{10,40}\.[A-Za-z0-9]{2,5}$/;
 const TTL_SECONDS = 3600;
 
 /** Content type to force on the response, keyed by the extension we mint. */
@@ -33,6 +33,7 @@ const CONTENT_TYPE_BY_EXT: Record<string, string> = {
   m4v: 'video/x-m4v',
   mov: 'video/quicktime',
   webm: 'video/webm',
+  ogg: 'video/ogg',
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
   png: 'image/png',

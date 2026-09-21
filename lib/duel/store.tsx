@@ -63,7 +63,13 @@ interface StoreShape {
   deleteChallenge: (id: string) => Promise<boolean>;
   joinChallenge: (id: string) => Promise<boolean>;
   leaveChallenge: (id: string) => Promise<boolean>;
-  checkin: (challengeId: string, note: string) => Promise<Checkin | null>;
+  checkin: (
+    challengeId: string,
+    note: string,
+    mediaUrl?: string | null,
+    mediaType?: 'image' | 'video' | null,
+    dayNumber?: number
+  ) => Promise<Checkin | null>;
   toggleLike: (id: string) => Promise<boolean>;
   toggleSave: (id: string) => Promise<boolean>;
   shareChallenge: (id: string) => Promise<boolean>;
@@ -389,11 +395,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         toast(ch ? `Joined ${ch.title}. Day 1 starts now.` : 'Joined challenge.');
       }), 'Could not join the challenge.'),
     leaveChallenge: (id) => guard(() => adapter.leaveChallenge(id).then(() => toast('Left the challenge.', 'info')), 'Could not leave the challenge.'),
-    checkin: async (challengeId, note) => {
+    checkin: async (challengeId, note, mediaUrl, mediaType, dayNumber) => {
       try {
-        const ck = await adapter.checkin(challengeId, note);
+        const ck = await adapter.checkin(challengeId, note, mediaUrl, mediaType, dayNumber);
         const part = dbRef.current.participants.find((p) => p.challengeId === challengeId && p.userId === dbRef.current.meId);
-        toast(part?.status === 'completed' ? 'Challenge completed. Legend.' : `Day ${ck.dayNumber} logged. Streak alive!`);
+        toast(part?.status === 'completed' ? 'Challenge completed. Legend!' : `Day ${ck.dayNumber} proof logged. Streak alive!`);
         return ck;
       } catch (err: any) {
         toast(err?.message ?? 'Check-in failed.', 'error');

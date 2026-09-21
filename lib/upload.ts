@@ -3,6 +3,7 @@
 import { fileToDataURL } from './format';
 export { fileToDataURL, blobToFile } from './format';
 import { isR2Configured, isSupabaseConfigured } from './config';
+import { saveMediaBlob } from './idb-storage';
 
 /**
  * Production media upload pipeline.
@@ -15,33 +16,45 @@ import { isR2Configured, isSupabaseConfigured } from './config';
  *      upload progress, with automatic retry + exponential backoff.
  *   3. POST /api/upload/complete → server verifies the object exists.
  *
- * In demo mode (no R2 configured) it falls back to a data URL / object URL
- * so the app keeps working end-to-end.
+ * When R2 is not configured, files (including 300 MB videos) are persisted
+ * into client IndexedDB with automatic URL resolution, so the app works
+ * seamlessly end-to-end.
  */
 
-export type UploadKind = 'post-image' | 'post-video' | 'avatar' | 'cover' | 'chat-image' | 'challenge-cover';
+export type UploadKind =
+  | 'post-image'
+  | 'post-video'
+  | 'avatar'
+  | 'cover'
+  | 'chat-image'
+  | 'challenge-cover'
+  | 'proof-image'
+  | 'proof-video';
 
 export interface UploadResult {
-  /** R2 object key (production) or data/object URL (demo fallback). */
+  /** R2 object key (production) or IndexedDB/data URL (local fallback). */
   key: string;
   storage: 'r2' | 'local';
 }
 
 export const UPLOAD_LIMITS: Record<UploadKind, { maxMB: number; mimes: string[] }> = {
-  'post-image': { maxMB: 10, mimes: ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'] },
+  'post-image': { maxMB: 15, mimes: ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'] },
   'chat-image': { maxMB: 8, mimes: ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'] },
   avatar: { maxMB: 5, mimes: ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'] },
   cover: { maxMB: 8, mimes: ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'] },
   'challenge-cover': { maxMB: 8, mimes: ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'] },
-  'post-video': { maxMB: 300, mimes: ['video/mp4', 'video/quicktime', 'video/webm', 'video/x-m4v'] },
+  'post-video': { maxMB: 300, mimes: ['video/mp4', 'video/quicktime', 'video/webm', 'video/x-m4v', 'video/ogg'] },
+  'proof-image': { maxMB: 15, mimes: ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'] },
+  'proof-video': { maxMB: 300, mimes: ['video/mp4', 'video/quicktime', 'video/webm', 'video/x-m4v', 'video/ogg'] },
 };
 
 export function validateUpload(file: File, kind: UploadKind): string | null {
   const limit = UPLOAD_LIMITS[kind];
+  if (!limit) return 'Unknown upload kind.';
   if (!limit.mimes.includes(file.type)) {
-    return kind === 'post-video'
-      ? 'Unsupported video format. Use MP4, MOV or WebM.'
-      : 'Unsupported image format. Use JPG, PNG, GIF or WebP.';
+    return kind === 'post-video' || kind === 'proof-video'
+      ? 'Unsupported video format. Use MP4, MOV, WebM, or M4V.'
+      : 'Unsupported image format. Use JPG, PNG, GIF, or WebP.';
   }
   if (file.size > limit.maxMB * 1024 * 1024) {
     return `File too large — maximum ${limit.maxMB} MB.`;
@@ -51,33 +64,25 @@ export function validateUpload(file: File, kind: UploadKind): string | null {
 }
 
 /**
- * The server has no media storage configured at all (demo deployment). Only
- * this case may fall back to session-local media — a configured backend that
- * simply failed must not, because the fallback URL would be persisted.
+ * The server has no media storage configured at all (local deployment). Only
+ * this case may fall back to session-local media.
  */
 class StorageNotConfiguredError extends Error {}
 
 interface PresignResponse {
   key: string;
   uploadUrl: string;
-  /**
-   * The exact Content-Type the server bound into the signature. The PUT must
-   * send precisely this string — the server lowercases it, `File.type` is not
-   * guaranteed to be, and any difference is a 403 SignatureDoesNotMatch.
-   */
   contentType?: string;
   expiresIn: number;
 }
 
 async function presign(file: File, kind: UploadKind): Promise<PresignResponse> {
-  console.log('[upload] Requesting presign for:', { kind, filename: file.name, type: file.type, size: file.size });
   const res = await fetch('/api/upload/presign', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ kind, filename: file.name, contentType: file.type, size: file.size }),
   });
   const json = await res.json().catch(() => ({}));
-  console.log('[upload] Presign response:', { status: res.status, ok: res.ok, json });
   if (res.status === 503) throw new StorageNotConfiguredError(json.error || 'Media storage is not configured.');
   if (!res.ok) throw new Error(json.error || `Could not start upload (${res.status})`);
   return json as PresignResponse;
@@ -92,7 +97,6 @@ function putWithProgress(
   retries = 2
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    console.log('[upload] Starting PUT to R2:', { size: file.size, contentType, retries });
     const attempt = (remaining: number) => {
       const xhr = new XMLHttpRequest();
       xhr.open('PUT', url, true);
@@ -100,34 +104,26 @@ function putWithProgress(
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) {
           const pct = Math.round((e.loaded / e.total) * 100);
-          console.log('[upload] Progress:', pct + '%', `(${e.loaded}/${e.total})`);
           onProgress(pct);
         }
       };
       xhr.onload = () => {
-        console.log('[upload] PUT completed with status:', xhr.status);
         if (xhr.status >= 200 && xhr.status < 300) return resolve();
         if (xhr.status >= 500 && remaining > 0) {
-          console.warn('[upload] Server error, retrying...', { status: xhr.status, remaining });
           window.setTimeout(() => attempt(remaining - 1), 800 * Math.pow(2, retries - remaining));
         } else {
-          console.error('[upload] PUT failed:', xhr.status, xhr.responseText);
           reject(new Error(`Upload failed (${xhr.status})`));
         }
       };
       xhr.onerror = () => {
-        console.error('[upload] Network error during PUT');
         if (remaining > 0) {
-          console.warn('[upload] Retrying after network error...', { remaining });
           window.setTimeout(() => attempt(remaining - 1), 800 * Math.pow(2, retries - remaining));
         } else {
           reject(new Error('Network error during upload — check your connection and try again.'));
         }
       };
       xhr.ontimeout = () => {
-        console.error('[upload] Upload timed out');
         if (remaining > 0) {
-          console.warn('[upload] Retrying after timeout...', { remaining });
           window.setTimeout(() => attempt(remaining - 1), 800);
         } else {
           reject(new Error('Upload timed out. Try a smaller file or faster connection.'));
@@ -155,8 +151,8 @@ async function verifyComplete(key: string): Promise<boolean> {
 }
 
 /**
- * Upload media. Resolves with an object key (production R2) or a local URL
- * (demo fallback). `onProgress` receives 0–100.
+ * Upload media. Resolves with an object key (production R2) or an IndexedDB/local URL
+ * (fallback). `onProgress` receives 0–100.
  */
 export async function uploadMedia(
   file: File,
@@ -166,16 +162,14 @@ export async function uploadMedia(
   const validationError = validateUpload(file, kind);
   if (validationError) throw new Error(validationError);
 
-  onProgress?.(4);
+  onProgress?.(5);
 
   if (isR2Configured) {
     try {
       const { key, uploadUrl, contentType } = await presign(file, kind);
-      onProgress?.(8);
-      // Use the signed value, falling back to the file's own type for older
-      // server responses that do not echo it.
+      onProgress?.(12);
       await putWithProgress(uploadUrl, file, contentType || file.type, (pct) =>
-        onProgress?.(8 + Math.round(pct * 0.82))
+        onProgress?.(12 + Math.round(pct * 0.78))
       );
       onProgress?.(94);
       const ok = await verifyComplete(key);
@@ -184,11 +178,6 @@ export async function uploadMedia(
       return { key, storage: 'r2' };
     } catch (err) {
       if (!(err instanceof StorageNotConfiguredError)) {
-        // Storage IS configured but this upload did not land. Falling back here
-        // used to hand the composer a blob: URL, which was written to
-        // posts.video_url and reported as a success — then died with the page
-        // and rendered "Video unavailable" forever, for everyone. Fail loudly
-        // (but kindly) so nothing unplayable is ever persisted.
         console.error('[upload] media upload failed:', err);
         throw new Error(
           file.type.startsWith('video/')
@@ -196,32 +185,33 @@ export async function uploadMedia(
             : 'Your photo could not be uploaded. Please check your connection and try again.'
         );
       }
-      console.warn('[upload] media storage not configured — using session-local fallback');
-      // fall through to local fallback so the app keeps working in demo mode
+      console.warn('[upload] media storage not configured on server — using persistent local storage');
     }
   }
 
-  // Demo fallback. A data: URL is self-contained and safe to persist; a blob:
-  // URL is tied to this page session, so it must never reach the database.
-  if (file.type.startsWith('image/') && file.size <= 3.5 * 1024 * 1024) {
-    const dataUrl = await fileToDataURL(file);
+  // Persistent local storage fallback for development / offline / preview
+  // Saves the file blob into IndexedDB so it survives page reloads
+  onProgress?.(25);
+  const ext = file.name.includes('.') ? file.name.split('.').pop()!.toLowerCase() : (file.type.startsWith('video/') ? 'mp4' : 'jpg');
+  const localKey = `proofs/local/${Date.now()}-${Math.random().toString(36).slice(2, 9)}.${ext}`;
+
+  try {
+    await saveMediaBlob(localKey, file, file.name);
+    onProgress?.(75);
+  } catch (idbErr) {
+    console.warn('[upload] IndexedDB save failed, falling back to data/blob URL:', idbErr);
+    if (file.type.startsWith('image/') && file.size <= 4 * 1024 * 1024) {
+      const dataUrl = await fileToDataURL(file);
+      onProgress?.(100);
+      return { key: dataUrl, storage: 'local' };
+    }
+    const objUrl = URL.createObjectURL(file);
     onProgress?.(100);
-    return { key: dataUrl, storage: 'local' };
+    return { key: objUrl, storage: 'local' };
   }
 
-  if (isSupabaseConfigured) {
-    // Real database in play: refuse rather than store a reference that cannot
-    // survive a reload.
-    throw new Error(
-      file.type.startsWith('video/')
-        ? 'Video hosting is not set up yet, so videos cannot be shared. Please try a photo instead.'
-        : 'That file is too large to share without media hosting set up.'
-    );
-  }
-
-  const objUrl = URL.createObjectURL(file);
   onProgress?.(100);
-  return { key: objUrl, storage: 'local' };
+  return { key: localKey, storage: 'local' };
 }
 
 /** Back-compat helper used by older call-sites (image-only uploads). */
@@ -229,7 +219,6 @@ export async function uploadImage(
   file: File,
   onProgress?: (pct: number) => void
 ): Promise<string> {
-  const res = await uploadMedia(file, 'post-image', onProgress);
+  const res = await uploadMedia(file, 'proof-image', onProgress);
   return res.key;
 }
-

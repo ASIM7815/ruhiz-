@@ -135,6 +135,8 @@ export function mapCheckin(row: any, ids: IdMapper): Checkin {
     dayNumber: row.day_number,
     date: row.checkin_date,
     note: row.note ?? '',
+    mediaUrl: row.media_url ?? null,
+    mediaType: row.media_type ?? null,
     createdAt: row.created_at,
   };
 }

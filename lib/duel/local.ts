@@ -4,46 +4,30 @@
  * DUEL local adapter — a complete in-browser implementation of the DUEL
  * data contract, persisted to localStorage. It is used whenever Supabase
  * environment variables are absent (preview / offline / first-run), and it
- * implements the *same* rules as the SQL migration: counters via triggers
- * here, streak maths, completion detection, notification fan-out and the
- * activity log that feeds recommendations.
+ * implements the same rules as the SQL migration: streaks, completion detection,
+ * proof media tracking, performance calculations, and activity logging.
  *
- * Community personas react to your actions (joining, commenting, creating)
- * with short delays so notifications and messages behave like a live
- * product. With Supabase configured, real users produce these events and
- * the Supabase adapter replaces this file entirely.
+ * All fake/demo personas, starter challenges, fake follower counts, and
+ * placeholder posts are completely removed. Only real authenticated user
+ * data is stored and displayed.
  */
 
 import type { ActivityAction, AppNotification, Thread, UserProfile } from '@/lib/types';
 import { uid } from '@/lib/format';
 import { defaultSettings, emptyDB, type DuelDB } from './db';
-import { isoDay, SEED_CATEGORIES, SEED_CHALLENGES, SEED_COMMENTS, SEED_PROFILES, seedParticipation } from './seed';
+import { isoDay, SEED_CATEGORIES } from './seed';
 import type { Challenge, ChallengeComment, Checkin, CreateChallengeInput, Participation } from './types';
 import { durationBucket } from './types';
 import type { DuelAdapter } from './adapter';
 
-const STORAGE_KEY = 'duel.db.v1';
-
-const PERSONA_REPLIES = [
-  'Nice — day {day} logged on my side too. Keep the chain alive!',
-  'That is exactly the push I needed today. Thanks for posting.',
-  'Same challenge, different timezone, same struggle. Respect.',
-  'Logged. Tomorrow is the hard one, do not break the streak.',
-  'Great check-in. The consistency is the whole game here.',
-];
-
-const PERSONA_JOIN_NOTES = [
-  'just joined your challenge',
-  'joined your challenge and logged day 1',
-  'is in! Ready for day 1',
-];
+const STORAGE_KEY = 'duel.db.v2';
 
 async function hashPassword(pw: string): Promise<string> {
   try {
     const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`duel::${pw}`));
     return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
   } catch {
-    return `plain::${pw}`; // non-secure contexts (rare) — local demo only
+    return `plain::${pw}`;
   }
 }
 
@@ -89,14 +73,29 @@ export class LocalAdapter implements DuelAdapter {
   async bootstrap(): Promise<{ db: DuelDB; authed: boolean; error?: string }> {
     let loaded: DuelDB | null = null;
     try {
+      // Clean up legacy v1 key if present to purge old demo personas
+      if (window.localStorage.getItem('duel.db.v1')) {
+        try {
+          const old = JSON.parse(window.localStorage.getItem('duel.db.v1') || '{}');
+          if (old && old.accounts && old.accounts.length) {
+            // Keep real created accounts if any
+            loaded = old;
+          }
+        } catch {
+          // ignore
+        }
+        window.localStorage.removeItem('duel.db.v1');
+      }
+
       const raw = window.localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as DuelDB;
-        if (parsed && parsed.v === 1) loaded = parsed;
+        if (parsed) loaded = parsed;
       }
     } catch {
       loaded = null;
     }
+
     this.db = loaded ?? this.seed();
     this.migrateShape(this.db);
     this.dailyStreakReminders();
@@ -106,29 +105,70 @@ export class LocalAdapter implements DuelAdapter {
 
   private seed(): DuelDB {
     const db = emptyDB();
+    db.v = 2;
     db.categories = clone(SEED_CATEGORIES);
-    db.challenges = clone(SEED_CHALLENGES) as Challenge[];
+    db.challenges = [];
     db.profiles = {};
-    for (const p of SEED_PROFILES) db.profiles[p.id] = clone(p);
-    const { participants, checkins } = seedParticipation();
-    db.participants = participants;
-    db.checkins = checkins;
-    db.comments = clone(SEED_COMMENTS);
-    for (const c of db.comments) {
-      const ch = db.challenges.find((x) => x.id === c.challengeId);
-      if (ch) ch.commentCount += 1;
-    }
+    db.participants = [];
+    db.checkins = [];
+    db.comments = [];
     db.settings = defaultSettings();
     return db;
   }
 
-  /** Tolerate older persisted shapes without crashing. */
+  /** Tolerate older persisted shapes and purge any legacy fake personas/challenges. */
   private migrateShape(db: DuelDB) {
+    db.v = 2;
     db.settings = { ...defaultSettings(), ...db.settings };
     db.accounts ??= [];
     db.threads ??= [];
     db.searches ??= [];
     db.activities ??= [];
+    db.categories = clone(SEED_CATEGORIES);
+
+    // Purge legacy personas and their starter challenges
+    if (db.profiles) {
+      for (const [id, p] of Object.entries(db.profiles)) {
+        if (p.persona || id.startsWith('u-aya') || id.startsWith('u-marcus') || id.startsWith('u-lina') || id.startsWith('u-kenji') || id.startsWith('u-priya') || id.startsWith('u-diego') || id.startsWith('u-sara') || id.startsWith('u-tomas')) {
+          delete db.profiles[id];
+        }
+      }
+    }
+
+    db.challenges = (db.challenges || []).filter(
+      (c) =>
+        !c.id.startsWith('c-coding-30') &&
+        !c.id.startsWith('c-fitness-21') &&
+        !c.id.startsWith('c-detox-7') &&
+        !c.id.startsWith('c-reading-30') &&
+        !c.id.startsWith('c-mind-14') &&
+        !c.id.startsWith('c-leetcode-45') &&
+        !c.id.startsWith('c-sleep-7') &&
+        !c.id.startsWith('c-nosugar-30') &&
+        !c.id.startsWith('c-journal-14') &&
+        !c.id.startsWith('c-budget-21') &&
+        !c.id.startsWith('c-draw-30') &&
+        !c.id.startsWith('c-steps-7') &&
+        !c.id.startsWith('c-water-30') &&
+        !c.id.startsWith('c-ship-14') &&
+        !c.id.startsWith('c-spanish-30') &&
+        !c.id.startsWith('c-outside-7') &&
+        !c.id.startsWith('c-marathon-90') &&
+        !c.id.startsWith('c-deepwork-14')
+    );
+    db.checkins = (db.checkins || []).filter((c) => !c.id.startsWith('ck-seed-'));
+    db.comments = (db.comments || []).filter((c) => !c.id.startsWith('cm-'));
+    db.participants = (db.participants || []).filter(
+      (p) =>
+        !p.userId.startsWith('u-aya') &&
+        !p.userId.startsWith('u-marcus') &&
+        !p.userId.startsWith('u-lina') &&
+        !p.userId.startsWith('u-kenji') &&
+        !p.userId.startsWith('u-priya') &&
+        !p.userId.startsWith('u-diego') &&
+        !p.userId.startsWith('u-sara') &&
+        !p.userId.startsWith('u-tomas')
+    );
   }
 
   /* -------------------------------- auth -------------------------------- */
@@ -160,7 +200,7 @@ export class LocalAdapter implements DuelAdapter {
     this.db.profiles[profile.id] = profile;
     this.db.accounts.push({ email, password: await hashPassword(input.password), profileId: profile.id });
     this.db.meId = profile.id;
-    this.notify(profile.id, { kind: 'system', text: 'Welcome to DUEL — join your first challenge to start a streak.' });
+    this.notify(profile.id, { kind: 'system', text: 'Welcome to DUEL — create or join a challenge to start your daily streak.' });
     this.emit();
   }
 
@@ -179,7 +219,6 @@ export class LocalAdapter implements DuelAdapter {
     this.emit();
   }
 
-  /** Local-only password reset (demo accounts live in this browser). */
   async demoResetPassword(email: string, newPassword: string): Promise<void> {
     const account = this.db.accounts.find((a) => a.email === email.trim().toLowerCase());
     if (!account) throw new Error('No account found for this email.');
@@ -208,7 +247,7 @@ export class LocalAdapter implements DuelAdapter {
       coverUrl: input.coverUrl,
       tags: input.tags,
       status: 'open',
-      participantCount: 1,
+      participantCount: 1, // creator automatically joins
       likeCount: 0,
       commentCount: 0,
       saveCount: 0,
@@ -231,7 +270,6 @@ export class LocalAdapter implements DuelAdapter {
     });
     this.track('create', ch);
     this.emit();
-    this.scheduleCommunityEngagement(ch.id);
     return clone(ch);
   }
 
@@ -262,7 +300,9 @@ export class LocalAdapter implements DuelAdapter {
   async joinChallenge(id: string): Promise<void> {
     const me = this.requireMe();
     const ch = this.findChallenge(id);
-    if (this.db.participants.some((p) => p.challengeId === id && p.userId === me)) throw new Error('You already joined this challenge.');
+    if (this.db.participants.some((p) => p.challengeId === id && p.userId === me)) {
+      throw new Error('You already joined this challenge.');
+    }
     const now = new Date().toISOString();
     this.db.participants.push({
       challengeId: id,
@@ -277,8 +317,14 @@ export class LocalAdapter implements DuelAdapter {
     });
     ch.participantCount += 1;
     this.track('join', ch);
-    if (ch.creatorId !== me && this.db.profiles[ch.creatorId]?.persona) {
-      // creator (a real account in production) would be notified here
+    if (ch.creatorId !== me) {
+      const myProfile = this.db.profiles[me];
+      this.notify(ch.creatorId, {
+        kind: 'join',
+        actorId: me,
+        challengeId: ch.id,
+        text: `${myProfile?.name ?? 'A new challenger'} joined your challenge ${ch.title}`,
+      });
     }
     this.emit();
   }
@@ -287,41 +333,109 @@ export class LocalAdapter implements DuelAdapter {
     const me = this.requireMe();
     const ch = this.findChallenge(id);
     const part = this.db.participants.find((p) => p.challengeId === id && p.userId === me);
-    if (!part) throw new Error('You have not joined this challenge.');
+    if (!part) throw new Error('You are not participating in this challenge.');
     if (part.status === 'completed') throw new Error('Completed challenges stay on your record.');
-    this.db.participants = this.db.participants.filter((p) => p !== part);
-    this.db.checkins = this.db.checkins.filter((c) => !(c.challengeId === id && c.userId === me));
+    this.db.participants = this.db.participants.filter((p) => !(p.challengeId === id && p.userId === me));
     ch.participantCount = Math.max(0, ch.participantCount - 1);
     this.track('leave', ch);
     this.emit();
   }
 
-  /* ------------------------------- check-ins ---------------------------- */
+  /* ------------------------------ check-in ------------------------------ */
 
-  async checkin(challengeId: string, note: string): Promise<Checkin> {
+  async checkin(
+    challengeId: string,
+    note: string,
+    mediaUrl?: string | null,
+    mediaType?: 'image' | 'video' | null,
+    dayNumber?: number
+  ): Promise<Checkin> {
     const me = this.requireMe();
     const ch = this.findChallenge(challengeId);
-    const part = this.db.participants.find((p) => p.challengeId === challengeId && p.userId === me);
-    if (!part) throw new Error('Join the challenge before checking in.');
-    if (part.status === 'completed') throw new Error('This challenge is already completed.');
-    const today = isoDay(0);
-    if (part.lastCheckinDate === today) throw new Error('You already checked in today. Come back tomorrow!');
+    let part = this.db.participants.find((p) => p.challengeId === challengeId && p.userId === me);
 
+    // Auto-join if creator or first checkin
+    if (!part) {
+      if (ch.creatorId === me) {
+        part = {
+          challengeId,
+          userId: me,
+          status: 'active',
+          joinedAt: new Date().toISOString(),
+          currentStreak: 0,
+          longestStreak: 0,
+          completedDays: 0,
+          lastCheckinDate: null,
+          completedAt: null,
+        };
+        this.db.participants.push(part);
+      } else {
+        throw new Error('Join the challenge before checking in.');
+      }
+    }
+
+    const today = isoDay(0);
+    const existingCheckins = this.db.checkins.filter(
+      (c) => c.challengeId === challengeId && c.userId === me
+    );
+    const completedDaysSet = new Set(existingCheckins.map((c) => c.dayNumber));
+
+    // Target day calculation
+    const targetDay = dayNumber ?? (part.completedDays + 1);
+
+    if (targetDay < 1 || targetDay > ch.durationDays) {
+      throw new Error(`Day ${targetDay} is outside the challenge duration of ${ch.durationDays} days.`);
+    }
+
+    // Check if check-in for this specific day already exists -> update proof
+    const existingForDay = existingCheckins.find((c) => c.dayNumber === targetDay);
+    if (existingForDay) {
+      existingForDay.note = note.trim().slice(0, 2000);
+      if (mediaUrl !== undefined) existingForDay.mediaUrl = mediaUrl;
+      if (mediaType !== undefined) existingForDay.mediaType = mediaType;
+      this.emit();
+      return clone(existingForDay);
+    }
+
+    // Check if already checked in today and no dayNumber was specified
+    const checkedToday = existingCheckins.some((c) => c.date === today);
+    if (checkedToday && !dayNumber) {
+      const todayCk = existingCheckins.find((c) => c.date === today);
+      if (todayCk) {
+        todayCk.note = note.trim().slice(0, 2000);
+        if (mediaUrl !== undefined) todayCk.mediaUrl = mediaUrl;
+        if (mediaType !== undefined) todayCk.mediaType = mediaType;
+        this.emit();
+        return clone(todayCk);
+      }
+    }
+
+    // Streak calculation
     const yesterday = isoDay(-1);
-    part.currentStreak = part.lastCheckinDate === yesterday ? part.currentStreak + 1 : 1;
+    if (part.lastCheckinDate === yesterday) {
+      part.currentStreak += 1;
+    } else if (part.lastCheckinDate === today) {
+      // already today, preserve
+    } else {
+      part.currentStreak = 1;
+    }
     part.longestStreak = Math.max(part.longestStreak, part.currentStreak);
-    part.completedDays += 1;
     part.lastCheckinDate = today;
+    completedDaysSet.add(targetDay);
+    part.completedDays = completedDaysSet.size;
 
     const ck: Checkin = {
       id: uid('ck-'),
       challengeId,
       userId: me,
-      dayNumber: part.completedDays,
+      dayNumber: targetDay,
       date: today,
-      note: note.trim().slice(0, 500),
+      note: note.trim().slice(0, 2000),
+      mediaUrl: mediaUrl ?? null,
+      mediaType: mediaType ?? null,
       createdAt: new Date().toISOString(),
     };
+
     this.db.checkins.push(ck);
     this.track('checkin', ch);
 
@@ -330,10 +444,19 @@ export class LocalAdapter implements DuelAdapter {
       part.completedAt = ck.createdAt;
       ch.completionCount += 1;
       this.track('complete', ch);
-      this.notify(me, { kind: 'streak', challengeId, text: `Challenge complete: ${ch.title}. ${ch.durationDays} days, done. Badge earned.` });
+      this.notify(me, {
+        kind: 'streak',
+        challengeId,
+        text: `Challenge completed: "${ch.title}"! All ${ch.durationDays} days completed.`,
+      });
     } else if ([3, 7, 14, 21, 30, 50, 100].includes(part.currentStreak)) {
-      this.notify(me, { kind: 'streak', challengeId, text: `${part.currentStreak}-day streak on ${ch.title}. Do not break the chain.` });
+      this.notify(me, {
+        kind: 'streak',
+        challengeId,
+        text: `${part.currentStreak}-day streak on ${ch.title}. Keep the chain alive!`,
+      });
     }
+
     this.emit();
     return clone(ck);
   }
@@ -343,9 +466,9 @@ export class LocalAdapter implements DuelAdapter {
   async toggleLike(id: string): Promise<boolean> {
     const me = this.requireMe();
     const ch = this.findChallenge(id);
-    const existing = this.db.likes.find((l) => l.challengeId === id && l.userId === me);
-    if (existing) {
-      this.db.likes = this.db.likes.filter((l) => l !== existing);
+    const idx = this.db.likes.findIndex((l) => l.challengeId === id && l.userId === me);
+    if (idx >= 0) {
+      this.db.likes.splice(idx, 1);
       ch.likeCount = Math.max(0, ch.likeCount - 1);
       this.emit();
       return false;
@@ -353,6 +476,15 @@ export class LocalAdapter implements DuelAdapter {
     this.db.likes.push({ challengeId: id, userId: me, createdAt: new Date().toISOString() });
     ch.likeCount += 1;
     this.track('like', ch);
+    if (ch.creatorId !== me) {
+      const myProfile = this.db.profiles[me];
+      this.notify(ch.creatorId, {
+        kind: 'like',
+        actorId: me,
+        challengeId: ch.id,
+        text: `${myProfile?.name ?? 'Someone'} liked your challenge ${ch.title}`,
+      });
+    }
     this.emit();
     return true;
   }
@@ -360,9 +492,9 @@ export class LocalAdapter implements DuelAdapter {
   async toggleSave(id: string): Promise<boolean> {
     const me = this.requireMe();
     const ch = this.findChallenge(id);
-    const existing = this.db.saves.find((l) => l.challengeId === id && l.userId === me);
-    if (existing) {
-      this.db.saves = this.db.saves.filter((l) => l !== existing);
+    const idx = this.db.saves.findIndex((s) => s.challengeId === id && s.userId === me);
+    if (idx >= 0) {
+      this.db.saves.splice(idx, 1);
       ch.saveCount = Math.max(0, ch.saveCount - 1);
       this.emit();
       return false;
@@ -386,21 +518,35 @@ export class LocalAdapter implements DuelAdapter {
   async addComment(id: string, text: string): Promise<ChallengeComment> {
     const me = this.requireMe();
     const ch = this.findChallenge(id);
-    const body = text.trim().slice(0, 1000);
+    const body = text.trim().slice(0, 500);
     if (!body) throw new Error('Comment cannot be empty.');
-    const cm: ChallengeComment = { id: uid('cm-'), challengeId: id, userId: me, text: body, createdAt: new Date().toISOString() };
+    const cm: ChallengeComment = {
+      id: uid('cm-'),
+      challengeId: id,
+      userId: me,
+      text: body,
+      createdAt: new Date().toISOString(),
+    };
     this.db.comments.push(cm);
     ch.commentCount += 1;
     this.track('comment', ch);
+    if (ch.creatorId !== me) {
+      const myProfile = this.db.profiles[me];
+      this.notify(ch.creatorId, {
+        kind: 'comment',
+        actorId: me,
+        challengeId: ch.id,
+        text: `${myProfile?.name ?? 'Someone'} commented on ${ch.title}`,
+      });
+    }
     this.emit();
-    this.maybePersonaReply(id, body);
     return clone(cm);
   }
 
   async deleteComment(id: string): Promise<void> {
     const me = this.requireMe();
     const cm = this.db.comments.find((c) => c.id === id);
-    if (!cm) return;
+    if (!cm) throw new Error('Comment not found.');
     if (cm.userId !== me) throw new Error('You can only delete your own comments.');
     this.db.comments = this.db.comments.filter((c) => c.id !== id);
     const ch = this.db.challenges.find((c) => c.id === cm.challengeId);
@@ -409,7 +555,7 @@ export class LocalAdapter implements DuelAdapter {
   }
 
   async viewChallenge(id: string): Promise<void> {
-    if (!this.db.meId || this.viewedThisSession.has(id)) return;
+    if (this.viewedThisSession.has(id)) return;
     this.viewedThisSession.add(id);
     const ch = this.db.challenges.find((c) => c.id === id);
     if (!ch) return;
@@ -430,7 +576,9 @@ export class LocalAdapter implements DuelAdapter {
     if (!me || !query.trim()) return;
     const q = query.trim().slice(0, 120);
     this.db.searches.push({ id: uid('s-'), userId: me, query: q, createdAt: new Date().toISOString() });
-    const cat = this.db.categories.find((c) => c.name.toLowerCase().includes(q.toLowerCase()) || q.toLowerCase().includes(c.id));
+    const cat = this.db.categories.find(
+      (c) => c.name.toLowerCase().includes(q.toLowerCase()) || q.toLowerCase().includes(c.id)
+    );
     this.db.activities.push({
       id: uid('a-'),
       userId: me,
@@ -450,7 +598,15 @@ export class LocalAdapter implements DuelAdapter {
     if (userId === me) throw new Error('You cannot message yourself.');
     const existing = this.db.threads.find((t) => t.userId === userId);
     if (existing) return existing.id;
-    const thread: Thread = { id: uid('t-'), userId, messages: [], unread: 0, online: false, otherLastReadAt: null, lastMessageAt: null };
+    const thread: Thread = {
+      id: uid('t-'),
+      userId,
+      messages: [],
+      unread: 0,
+      online: false,
+      otherLastReadAt: null,
+      lastMessageAt: null,
+    };
     this.db.threads.unshift(thread);
     this.emit();
     return thread.id;
@@ -465,26 +621,11 @@ export class LocalAdapter implements DuelAdapter {
     thread.messages.push({ id: uid('m-'), fromMe: true, text: body, at: new Date().toISOString() });
     thread.lastMessageAt = new Date().toISOString();
     this.emit();
-    const other = this.db.profiles[thread.userId];
-    if (other?.persona) {
-      const delay = 1400 + Math.random() * 2600;
-      this.timers.push(
-        window.setTimeout(() => {
-          const reply = PERSONA_REPLIES[Math.floor(Math.random() * PERSONA_REPLIES.length)].replace('{day}', String(Math.floor(Math.random() * 20) + 2));
-          thread.messages.push({ id: uid('m-'), fromMe: false, text: reply, at: new Date().toISOString() });
-          thread.lastMessageAt = new Date().toISOString();
-          if (this.db.meId !== me || document.hidden) thread.unread += 1;
-          this.notify(me, { kind: 'message', conversationId: thread.id, actorId: thread.userId, text: reply.slice(0, 120) });
-          this.emit();
-        }, delay)
-      );
-    }
   }
 
   async markThreadRead(threadId: string): Promise<void> {
     const thread = this.db.threads.find((t) => t.id === threadId);
-    if (!thread) return;
-    if (thread.unread === 0) return;
+    if (!thread || thread.unread === 0) return;
     thread.unread = 0;
     this.emit();
   }
@@ -501,7 +642,12 @@ export class LocalAdapter implements DuelAdapter {
 
   markAllNotificationsRead(): void {
     let changed = false;
-    for (const n of this.db.notifications) if (!n.read) { n.read = true; changed = true; }
+    for (const n of this.db.notifications) {
+      if (!n.read) {
+        n.read = true;
+        changed = true;
+      }
+    }
     if (changed) this.emit();
   }
 
@@ -519,7 +665,7 @@ export class LocalAdapter implements DuelAdapter {
       }
       patch = { ...patch, username: clean };
     }
-    Object.assign(p, patch, { id: me, persona: p.persona });
+    Object.assign(p, patch, { id: me, persona: false });
     this.emit();
   }
 
@@ -529,7 +675,9 @@ export class LocalAdapter implements DuelAdapter {
   }
 
   async blockUser(id: string): Promise<void> {
-    if (!this.db.settings.blocked.includes(id)) this.db.settings.blocked = [...this.db.settings.blocked, id];
+    if (!this.db.settings.blocked.includes(id)) {
+      this.db.settings.blocked = [...this.db.settings.blocked, id];
+    }
     this.emit();
   }
 
@@ -542,7 +690,12 @@ export class LocalAdapter implements DuelAdapter {
     this.timers.forEach((t) => window.clearTimeout(t));
     this.timers = [];
     this.viewedThisSession.clear();
-    try { window.localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
+    try {
+      window.localStorage.removeItem(STORAGE_KEY);
+      window.localStorage.removeItem('duel.db.v1');
+    } catch {
+      /* ignore */
+    }
     this.db = this.seed();
     this.emit();
   }
@@ -599,64 +752,6 @@ export class LocalAdapter implements DuelAdapter {
         read: false,
       });
     }
-  }
-
-  /** Simulated community: personas join / like / comment on new challenges. */
-  private scheduleCommunityEngagement(challengeId: string) {
-    const personas = SEED_PROFILES.slice(0, 5);
-    const pick = personas[Math.floor(Math.random() * personas.length)];
-    this.timers.push(
-      window.setTimeout(() => {
-        const ch = this.db.challenges.find((c) => c.id === challengeId);
-        if (!ch) return;
-        const already = this.db.participants.some((p) => p.challengeId === challengeId && p.userId === pick.id);
-        if (!already) {
-          this.db.participants.push({
-            challengeId, userId: pick.id, status: 'active', joinedAt: new Date().toISOString(),
-            currentStreak: 1, longestStreak: 1, completedDays: 1, lastCheckinDate: isoDay(0), completedAt: null,
-          } as Participation);
-          ch.participantCount += 1;
-          this.notify(this.db.meId!, {
-            kind: 'join', actorId: pick.id, challengeId,
-            text: `${pick.name} ${PERSONA_JOIN_NOTES[Math.floor(Math.random() * PERSONA_JOIN_NOTES.length)]}`,
-          });
-          this.emit();
-        }
-      }, 18000 + Math.random() * 20000)
-    );
-    this.timers.push(
-      window.setTimeout(() => {
-        const ch = this.db.challenges.find((c) => c.id === challengeId);
-        if (!ch || !this.db.meId) return;
-        ch.likeCount += 1;
-        this.db.likes.push({ challengeId, userId: pick.id, createdAt: new Date().toISOString() });
-        this.notify(this.db.meId, { kind: 'like', actorId: pick.id, challengeId, text: `${pick.name} liked your challenge ${ch.title}` });
-        this.emit();
-      }, 34000 + Math.random() * 26000)
-    );
-  }
-
-  private maybePersonaReply(challengeId: string, _body: string) {
-    const ch = this.db.challenges.find((c) => c.id === challengeId);
-    if (!ch || ch.creatorId === this.db.meId) return;
-    if (Math.random() > 0.6) return;
-    const author = this.db.profiles[ch.creatorId];
-    if (!author?.persona) return;
-    this.timers.push(
-      window.setTimeout(() => {
-        const target = this.db.challenges.find((c) => c.id === challengeId);
-        if (!target) return;
-        const cm: ChallengeComment = {
-          id: uid('cm-'), challengeId, userId: author.id,
-          text: PERSONA_REPLIES[Math.floor(Math.random() * PERSONA_REPLIES.length)].replace('{day}', String(Math.floor(Math.random() * 12) + 2)),
-          createdAt: new Date().toISOString(),
-        };
-        this.db.comments.push(cm);
-        target.commentCount += 1;
-        this.notify(this.db.meId!, { kind: 'comment', actorId: author.id, challengeId, text: `${author.name} replied to your comment on ${target.title}` });
-        this.emit();
-      }, 5000 + Math.random() * 9000)
-    );
   }
 }
 

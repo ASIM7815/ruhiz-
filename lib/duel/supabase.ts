@@ -318,9 +318,54 @@ export class SupabaseAdapter implements DuelAdapter {
     this.emit();
   }
 
-  async checkin(challengeId: string, note: string): Promise<Checkin> {
-    const { data, error } = await this.sb.rpc('duel_checkin', { p_challenge_id: challengeId, p_note: note });
-    if (error) throw error;
+  async checkin(
+    challengeId: string,
+    note: string,
+    mediaUrl?: string | null,
+    mediaType?: 'image' | 'video' | null,
+    dayNumber?: number
+  ): Promise<Checkin> {
+    // Attempt modern RPC with media parameters
+    let data: any = null;
+    let error: any = null;
+
+    try {
+      const res = await this.sb.rpc('duel_checkin', {
+        p_challenge_id: challengeId,
+        p_note: note,
+        p_media_url: mediaUrl ?? null,
+        p_media_type: mediaType ?? null,
+        p_day_number: dayNumber ?? null,
+      });
+      data = res.data;
+      error = res.error;
+    } catch (rpcErr) {
+      error = rpcErr;
+    }
+
+    // Fallback if database RPC has older 2-arg signature
+    if (error && (error.code === 'PGRST202' || error.message?.includes('parameters'))) {
+      const legacyRes = await this.sb.rpc('duel_checkin', {
+        p_challenge_id: challengeId,
+        p_note: note,
+      });
+      if (legacyRes.error) throw legacyRes.error;
+      data = legacyRes.data;
+      error = null;
+
+      // Update the newly created checkin row with mediaUrl/mediaType if present
+      if (data?.checkin?.id && (mediaUrl || mediaType)) {
+        await this.sb
+          .from('challenge_checkins')
+          .update({ media_url: mediaUrl ?? null, media_type: mediaType ?? null })
+          .eq('id', data.checkin.id);
+        data.checkin.media_url = mediaUrl ?? null;
+        data.checkin.media_type = mediaType ?? null;
+      }
+    } else if (error) {
+      throw error;
+    }
+
     const row = data?.checkin;
     const part = data?.participation;
     if (part) {
@@ -328,6 +373,11 @@ export class SupabaseAdapter implements DuelAdapter {
       this.db.participants.push(mapParticipation({ ...part, user_id: this.profileId }, this.ids));
     }
     const ck = row ? mapCheckin({ ...row, user_id: this.profileId }, this.ids) : null;
+    if (ck) {
+      // Update checkins in local db snapshot
+      this.db.checkins = this.db.checkins.filter((c) => c.id !== ck.id);
+      this.db.checkins.push(ck);
+    }
     const ch = this.db.challenges.find((c) => c.id === challengeId);
     if (ch && ck) this.track('checkin', ch);
     this.emit();
