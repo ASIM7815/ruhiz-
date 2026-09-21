@@ -10,7 +10,7 @@ BEGIN;
 -- Update duel_checkin to also create challenge_post when media is provided
 CREATE OR REPLACE FUNCTION public.duel_checkin(
   p_challenge_id uuid,
-  p_note text,
+  p_note text DEFAULT '',
   p_media_url text DEFAULT NULL,
   p_media_type text DEFAULT NULL,
   p_day_number int DEFAULT NULL

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { isR2Key, peekMediaUrl, resolveMediaUrl } from '@/lib/media';
+import { needsResolve, peekMediaUrl, resolveMediaUrl } from '@/lib/media';
 
 /**
  * Media components that transparently display either plain URLs (static
@@ -43,7 +43,7 @@ export function R2Image({
 }) {
   const [url, setUrl] = useState<string | null>(() => peekMediaUrl(mediaKey));
   const [state, setState] = useState<MediaState>(() =>
-    !mediaKey ? 'empty' : !isR2Key(mediaKey) || peekMediaUrl(mediaKey) ? 'ready' : 'loading'
+    !mediaKey ? 'empty' : !needsResolve(mediaKey) || peekMediaUrl(mediaKey) ? 'ready' : 'loading'
   );
   const retried = useRef(false);
 
@@ -54,7 +54,7 @@ export function R2Image({
         setState('empty');
         return;
       }
-      if (!isR2Key(mediaKey)) {
+      if (!needsResolve(mediaKey)) {
         setUrl(mediaKey);
         setState('ready');
         return;
@@ -81,7 +81,7 @@ export function R2Image({
 
   /** One silent retry with a new signed URL before showing the fallback. */
   const handleError = () => {
-    if (isR2Key(mediaKey) && !retried.current) {
+    if (needsResolve(mediaKey) && !retried.current) {
       retried.current = true;
       setUrl(null);
       load(true);
@@ -150,7 +150,7 @@ export function R2Video({
 }) {
   const [url, setUrl] = useState<string | null>(() => peekMediaUrl(mediaKey));
   const [state, setState] = useState<MediaState>(() =>
-    !mediaKey ? 'empty' : !isR2Key(mediaKey) || peekMediaUrl(mediaKey) ? 'ready' : 'loading'
+    !mediaKey ? 'empty' : !needsResolve(mediaKey) || peekMediaUrl(mediaKey) ? 'ready' : 'loading'
   );
   const retried = useRef(false);
 
@@ -161,7 +161,7 @@ export function R2Video({
         setState('empty');
         return;
       }
-      if (!isR2Key(mediaKey)) {
+      if (!needsResolve(mediaKey)) {
         setUrl(mediaKey);
         setState('ready');
         return;
@@ -190,7 +190,7 @@ export function R2Video({
     // A signed URL can expire while the member is still on the page, and a
     // transient network blip looks identical to a broken file from the element's
     // point of view. Re-sign once before giving up.
-    if (isR2Key(mediaKey) && !retried.current) {
+    if (needsResolve(mediaKey) && !retried.current) {
       retried.current = true;
       setUrl(null);
       load(true);
@@ -208,7 +208,7 @@ export function R2Video({
   // an R2 key always resolves to our own signed object URL. Checking the
   // original reference (not the signed URL) keeps the 11-character video-id
   // pattern from ever being matched against a signed URL by accident.
-  const embedId = !isR2Key(mediaKey ?? '') ? getYouTubeVideoId(mediaKey ?? '') : null;
+  const embedId = !needsResolve(mediaKey ?? '') ? getYouTubeVideoId(mediaKey ?? '') : null;
 
   if (state === 'empty' || state === 'failed' || !url) {
     return (
@@ -305,7 +305,7 @@ export function useMediaUrl(ref?: string | null): string | null {
       setUrl(null);
       return;
     }
-    if (!isR2Key(ref)) {
+    if (!needsResolve(ref)) {
       setUrl(ref);
       return;
     }

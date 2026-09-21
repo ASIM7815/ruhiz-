@@ -71,9 +71,7 @@ function ShellInner() {
 
   /* auth guard: the app area requires a session */
   useEffect(() => {
-    console.log('[AUTH GUARD] hydrated:', store.hydrated, 'authed:', store.authed, 'splash:', splash);
     if (store.hydrated && !store.authed && !splash) {
-      console.log('[REDIRECT TO LOGIN] reason: auth guard failed - user not authenticated after hydration');
       window.location.replace('/login');
     }
   }, [store.hydrated, store.authed, splash]);

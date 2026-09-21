@@ -102,7 +102,9 @@ create table if not exists public.profiles (
 
 );
 
-create unique index if not exists idx_profiles_user_id on public.profiles (user_id) where user_id is not null;
+-- Full (non-partial) unique index so `on conflict (user_id)` in handle_new_user()
+-- has a matching arbiter; multiple NULL user_ids (personas) still coexist.
+create unique index if not exists idx_profiles_user_id on public.profiles (user_id);
 
 create unique index if not exists idx_profiles_username on public.profiles (lower(username)) where username is not null;
 
@@ -1051,7 +1053,7 @@ language plpgsql security definer set search_path = public as $$
 
 declare
 
-  interactions int;
+  v_interactions int;
 
   max_pop double precision;
 
@@ -1063,7 +1065,7 @@ declare
 
 begin
 
-  select coalesce(sum(interactions), 0) into interactions
+  select coalesce(sum(user_category_affinity.interactions), 0) into v_interactions
 
     from public.user_category_affinity where user_id = p_user;
 
@@ -1113,7 +1115,7 @@ begin
 
          case
 
-           when interactions = 0 then
+           when v_interactions = 0 then
 
              case when c.participant_count > 1500 then 'Popular this week in ' || cat.name
 

@@ -42,6 +42,7 @@ const EXT_BY_MIME: Record<string, string> = {
   'video/quicktime': 'mov',
   'video/webm': 'webm',
   'video/x-m4v': 'm4v',
+  'video/ogg': 'ogv',
 };
 
 function sanitizeExt(filename: string, mime: string): string {

@@ -58,6 +58,8 @@ export interface Checkin {
   note: string;
   mediaUrl?: string | null;
   mediaType?: 'image' | 'video' | null;
+  /** full media set when the check-in was derived from a daily post */
+  media?: ChallengePostMedia[];
   createdAt: string;
 }
 
@@ -69,7 +71,23 @@ export interface ChallengeComment {
   createdAt: string;
 }
 
-/** A public progress post (challenge_checkins row) enriched for social feeds. */
+/** Media file attached to a daily post (shared by every view). */
+export interface ChallengePostMedia {
+  id: string;
+  /** owning post id (populated locally; implied by the parent row in SQL) */
+  postId?: string;
+  mediaType: 'image' | 'video';
+  url: string;
+  thumbnailUrl: string | null;
+  width: number | null;
+  height: number | null;
+  durationMs: number | null;
+  fileSize: number | null;
+  sortOrder: number;
+  createdAt?: string;
+}
+
+/** A daily post (challenge_posts row) enriched for social feeds. */
 export interface FeedPost {
   id: string;
   challengeId: string;
@@ -83,10 +101,13 @@ export interface FeedPost {
   authorUsername: string;
   authorAvatar: string | null;
   dayNumber: number;
-  date: string; // yyyy-mm-dd
+  date: string; // yyyy-mm-dd (the challenge day this entry documents)
   note: string;
-  mediaUrl: string;
-  mediaType: 'image' | 'video';
+  /** first media item — convenience for tiles (null on text-only posts) */
+  mediaUrl: string | null;
+  mediaType: 'image' | 'video' | null;
+  /** every media file attached to the post, in display order */
+  media: ChallengePostMedia[];
   createdAt: string;
   likeCount: number;
   commentCount: number;
@@ -158,7 +179,8 @@ export const DURATION_BUCKET_LABEL: Record<DurationBucket, string> = {
 };
 
 // ============================================================================
-// CHALLENGE POSTS - Daily entries with media
+// CHALLENGE POSTS — the unified daily-entry model
+//   Challenge → Participants → Daily Posts → Media
 // ============================================================================
 
 /** Daily entry/post inside a challenge */
@@ -167,36 +189,12 @@ export interface ChallengePost {
   challengeId: string;
   userId: string;
   dayNumber: number;
+  postDate: string; // yyyy-mm-dd — the challenge day this entry documents
   caption: string;
   likeCount: number;
   commentCount: number;
   createdAt: string;
   updatedAt: string;
-}
-
-/** Media file attached to a challenge post */
-export interface ChallengePostMedia {
-  id: string;
-  postId: string;
-  mediaType: 'image' | 'video';
-  url: string;
-  thumbnailUrl: string | null;
-  width: number | null;
-  height: number | null;
-  durationMs: number | null;
-  fileSize: number | null;
-  sortOrder: number;
-  createdAt: string;
-}
-
-/** Challenge post enriched with user info and media for display */
-export interface ChallengePostView extends ChallengePost {
-  username: string;
-  displayName: string;
-  avatarUrl: string | null;
-  media: ChallengePostMedia[];
-  challengeTitle?: string;
-  liked?: boolean;
 }
 
 export interface ChallengePostLike {
@@ -213,17 +211,21 @@ export interface ChallengePostComment {
   createdAt: string;
 }
 
-export interface CreatePostInput {
+/** One media file to attach to a submitted daily post. */
+export interface PostMediaInput {
+  type: 'image' | 'video';
+  url: string;
+  thumbnailUrl?: string | null;
+  width?: number | null;
+  height?: number | null;
+  durationMs?: number | null;
+  fileSize?: number | null;
+}
+
+export interface SubmitPostInput {
   challengeId: string;
   dayNumber: number;
   caption: string;
-  media: {
-    type: 'image' | 'video';
-    url: string;
-    thumbnailUrl?: string;
-    width?: number;
-    height?: number;
-    durationMs?: number;
-    fileSize?: number;
-  }[];
+  /** null keeps the existing media set (caption-only edit) */
+  media: PostMediaInput[] | null;
 }

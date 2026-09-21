@@ -138,11 +138,22 @@ function ok(name, cond) {
   db = await adapter.bootstrap().then((r) => r.db);
   ok('completed days still 1 after update', db.participants.find((p) => p.challengeId === ch.id && p.userId === me).completedDays === 1);
 
-  // Day 2: simulate consecutive day check-in with video proof
+  // Day 2 under the day-slot model: its target date is joined+1, which has not
+  // started yet — the DB/adapter must reject future days.
+  let earlyErr = null;
+  try {
+    await adapter.checkin(ch.id, 'too early', 'proofs/local/x.jpg', 'image', 2);
+  } catch (e) {
+    earlyErr = e && e.message;
+  }
+  ok('day 2 rejected before its date starts', /has not started/.test(String(earlyErr)));
+
+  // Simulate the passage of time: joined yesterday → day 2 is now due.
   const internal = adapter;
   const p = internal.db.participants.find((x) => x.challengeId === ch.id && x.userId === me);
   const yesterday = new Date(Date.now() - 86400_000).toISOString().slice(0, 10);
   p.lastCheckinDate = yesterday;
+  p.joinedAt = yesterday + 'T08:00:00.000Z';
 
   const ck2 = await adapter.checkin(
     ch.id,

@@ -532,14 +532,14 @@ create or replace function public.duel_refresh_recommendations(p_user uuid)
 returns void
 language plpgsql security definer set search_path = public as $$
 declare
-  interactions int;
+  v_interactions int;
   max_pop double precision;
   max_eng double precision;
   max_aff double precision;
   max_bkt double precision;
   max_kw  double precision;
 begin
-  select coalesce(sum(interactions), 0) into interactions
+  select coalesce(sum(user_category_affinity.interactions), 0) into v_interactions
     from public.user_category_affinity where user_id = p_user;
 
   select coalesce(max(ln(1 + participant_count + like_count * 2 + save_count)), 0.0001) into max_pop
@@ -596,7 +596,7 @@ begin
          ) * 100
          + (hashtext(p_user::text || c.id::text) % 1000) / 500.0,
          case
-           when interactions = 0 and coalesce(kw.score, 0) = 0 then
+           when v_interactions = 0 and coalesce(kw.score, 0) = 0 then
              case when c.participant_count > 1500 then 'Popular this week in ' || cat.name
                   else 'Staff pick in ' || cat.name end
            when coalesce(kw.score, 0) >= max_kw * 0.6 and topkw.k is not null then

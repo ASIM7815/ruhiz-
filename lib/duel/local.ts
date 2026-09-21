@@ -16,11 +16,17 @@ import type { ActivityAction, AppNotification, Thread, UserProfile } from '@/lib
 import { uid } from '@/lib/format';
 import { defaultSettings, emptyDB, type DuelDB } from './db';
 import { isoDay, SEED_CATEGORIES } from './seed';
-import type { Challenge, ChallengeComment, Checkin, CreateChallengeInput, FeedPost, Participation, PostComment } from './types';
+import type { Challenge, ChallengeComment, ChallengePost, ChallengePostMedia, Checkin, CreateChallengeInput, FeedPost, Participation, PostComment, SubmitPostInput } from './types';
 import { durationBucket } from './types';
 import type { DuelAdapter, FeedQuery } from './adapter';
 import { buildUserKeywords, creatorAffinity, keywordOverlap } from './keywords';
 import { computeAffinity } from './recommend';
+
+/** ISO day (yyyy-mm-dd) for a timestamp — day-slot date maths. */
+function isoDayFrom(ms: number): string {
+  const d = new Date(ms);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+}
 
 const STORAGE_KEY = 'duel.db.v2';
 
@@ -112,6 +118,8 @@ export class LocalAdapter implements DuelAdapter {
     db.challenges = [];
     db.profiles = {};
     db.participants = [];
+    db.posts = [];
+    db.postMedia = [];
     db.checkins = [];
     db.comments = [];
     db.settings = defaultSettings();
@@ -126,6 +134,8 @@ export class LocalAdapter implements DuelAdapter {
     db.threads ??= [];
     db.searches ??= [];
     db.activities ??= [];
+    db.posts ??= [];
+    db.postMedia ??= [];
     db.categories = clone(SEED_CATEGORIES);
 
     // Purge legacy personas and their starter challenges
@@ -291,6 +301,9 @@ export class LocalAdapter implements DuelAdapter {
     if (ch.creatorId !== me) throw new Error('You can only delete your own challenges.');
     this.db.challenges = this.db.challenges.filter((c) => c.id !== id);
     this.db.participants = this.db.participants.filter((p) => p.challengeId !== id);
+    const removedPosts = new Set(this.db.posts.filter((p) => p.challengeId === id).map((p) => p.id));
+    this.db.posts = this.db.posts.filter((p) => p.challengeId !== id);
+    this.db.postMedia = this.db.postMedia.filter((m) => !removedPosts.has(m.postId ?? ''));
     this.db.checkins = this.db.checkins.filter((p) => p.challengeId !== id);
     this.db.comments = this.db.comments.filter((p) => p.challengeId !== id);
     this.db.likes = this.db.likes.filter((p) => p.challengeId !== id);
@@ -343,24 +356,24 @@ export class LocalAdapter implements DuelAdapter {
     this.emit();
   }
 
-  /* ------------------------------ check-in ------------------------------ */
+  /* --------------------- daily posts (the write path) --------------------- */
 
-  async checkin(
-    challengeId: string,
-    note: string,
-    mediaUrl?: string | null,
-    mediaType?: 'image' | 'video' | null,
-    dayNumber?: number
-  ): Promise<Checkin> {
+  /**
+   * Submit (create or edit) a daily post — description + photo/video media.
+   * The check-in ledger and participation streaks are derived from posts,
+   * mirroring the SQL engine (day-slot model).
+   */
+  async submitDailyPost(
+    input: SubmitPostInput
+  ): Promise<{ post: FeedPost; participation: Participation | null }> {
     const me = this.requireMe();
-    const ch = this.findChallenge(challengeId);
-    let part = this.db.participants.find((p) => p.challengeId === challengeId && p.userId === me);
+    const ch = this.findChallenge(input.challengeId);
+    let part = this.db.participants.find((p) => p.challengeId === input.challengeId && p.userId === me);
 
-    // Auto-join if creator or first checkin
     if (!part) {
       if (ch.creatorId === me) {
         part = {
-          challengeId,
+          challengeId: input.challengeId,
           userId: me,
           status: 'active',
           joinedAt: new Date().toISOString(),
@@ -372,94 +385,186 @@ export class LocalAdapter implements DuelAdapter {
         };
         this.db.participants.push(part);
       } else {
-        throw new Error('Join the challenge before checking in.');
+        throw new Error('Join the challenge before posting.');
       }
     }
 
-    const today = isoDay(0);
-    const existingCheckins = this.db.checkins.filter(
-      (c) => c.challengeId === challengeId && c.userId === me
-    );
-    const completedDaysSet = new Set(existingCheckins.map((c) => c.dayNumber));
-
-    // Target day calculation
-    const targetDay = dayNumber ?? (part.completedDays + 1);
-
-    if (targetDay < 1 || targetDay > ch.durationDays) {
-      throw new Error(`Day ${targetDay} is outside the challenge duration of ${ch.durationDays} days.`);
+    const day = input.dayNumber;
+    if (!Number.isFinite(day) || day < 1 || day > ch.durationDays) {
+      throw new Error(`Day ${day} is outside the challenge duration of ${ch.durationDays} days.`);
     }
 
-    // Check if check-in for this specific day already exists -> update proof
-    const existingForDay = existingCheckins.find((c) => c.dayNumber === targetDay);
-    if (existingForDay) {
-      existingForDay.note = note.trim().slice(0, 2000);
-      if (mediaUrl !== undefined) existingForDay.mediaUrl = mediaUrl;
-      if (mediaType !== undefined) existingForDay.mediaType = mediaType;
-      this.emit();
-      return clone(existingForDay);
+    // Day-slot target date: joined date + (day - 1); never in the future.
+    const joinedDate = part.joinedAt.slice(0, 10);
+    const target = isoDayFrom(new Date(joinedDate + 'T00:00:00Z').getTime() + (day - 1) * 86400_000);
+    if (target > isoDay(0)) throw new Error(`Day ${day} has not started yet.`);
+
+    const caption = (input.caption ?? '').trim().slice(0, 2000);
+    const mediaInput = input.media;
+    if (!caption && (!mediaInput || mediaInput.length === 0)) {
+      const existing = this.db.posts.find((p) => p.challengeId === ch.id && p.userId === me && p.dayNumber === day);
+      if (!existing) throw new Error('A daily post needs a caption or media.');
     }
 
-    // Check if already checked in today and no dayNumber was specified
-    const checkedToday = existingCheckins.some((c) => c.date === today);
-    if (checkedToday && !dayNumber) {
-      const todayCk = existingCheckins.find((c) => c.date === today);
-      if (todayCk) {
-        todayCk.note = note.trim().slice(0, 2000);
-        if (mediaUrl !== undefined) todayCk.mediaUrl = mediaUrl;
-        if (mediaType !== undefined) todayCk.mediaType = mediaType;
-        this.emit();
-        return clone(todayCk);
-      }
-    }
-
-    // Streak calculation
-    const yesterday = isoDay(-1);
-    if (part.lastCheckinDate === yesterday) {
-      part.currentStreak += 1;
-    } else if (part.lastCheckinDate === today) {
-      // already today, preserve
+    let post = this.db.posts.find((p) => p.challengeId === ch.id && p.userId === me && p.dayNumber === day);
+    const now = new Date().toISOString();
+    if (post) {
+      post.caption = caption;
+      post.updatedAt = now;
     } else {
-      part.currentStreak = 1;
+      post = {
+        id: uid('p-'),
+        challengeId: ch.id,
+        userId: me,
+        dayNumber: day,
+        postDate: target,
+        caption,
+        likeCount: 0,
+        commentCount: 0,
+        createdAt: now,
+        updatedAt: now,
+      };
+      this.db.posts.push(post);
     }
-    part.longestStreak = Math.max(part.longestStreak, part.currentStreak);
-    part.lastCheckinDate = today;
-    completedDaysSet.add(targetDay);
-    part.completedDays = completedDaysSet.size;
 
-    const ck: Checkin = {
-      id: uid('ck-'),
-      challengeId,
-      userId: me,
-      dayNumber: targetDay,
-      date: today,
-      note: note.trim().slice(0, 2000),
-      mediaUrl: mediaUrl ?? null,
-      mediaType: mediaType ?? null,
-      createdAt: new Date().toISOString(),
-    };
+    if (mediaInput) {
+      // replace the media set for this post
+      this.db.postMedia = this.db.postMedia.filter((m) => m.postId !== post!.id);
+      mediaInput.forEach((m, i) => {
+        this.db.postMedia.push({
+          id: uid('pm-'),
+          postId: post!.id,
+          mediaType: m.type,
+          url: m.url,
+          thumbnailUrl: m.thumbnailUrl ?? null,
+          width: m.width ?? null,
+          height: m.height ?? null,
+          durationMs: m.durationMs ?? null,
+          fileSize: m.fileSize ?? null,
+          sortOrder: i,
+          createdAt: now,
+        });
+      });
+    }
 
-    this.db.checkins.push(ck);
+    this.syncLedger(post);
+    const participation = this.recomputeParticipation(ch, part);
     this.track('checkin', ch);
-
-    if (part.completedDays >= ch.durationDays) {
-      part.status = 'completed';
-      part.completedAt = ck.createdAt;
-      ch.completionCount += 1;
-      this.track('complete', ch);
-      this.notify(me, {
-        kind: 'streak',
-        challengeId,
-        text: `Challenge completed: "${ch.title}"! All ${ch.durationDays} days completed.`,
-      });
-    } else if ([3, 7, 14, 21, 30, 50, 100].includes(part.currentStreak)) {
-      this.notify(me, {
-        kind: 'streak',
-        challengeId,
-        text: `${part.currentStreak}-day streak on ${ch.title}. Keep the chain alive!`,
-      });
-    }
-
     this.emit();
+    return {
+      post: this.mapPostToFeed(post),
+      participation: participation ? { ...participation } : null,
+    };
+  }
+
+  /** Delete one of the caller's own daily posts. */
+  async deletePost(postId: string): Promise<void> {
+    const me = this.requireMe();
+    const post = this.db.posts.find((p) => p.id === postId);
+    if (!post) throw new Error('Post not found.');
+    if (post.userId !== me) throw new Error('You can only delete your own posts.');
+    const media = this.mediaOfPost(post.id);
+    this.db.postMedia = this.db.postMedia.filter((m) => !media.includes(m));
+    this.db.posts = this.db.posts.filter((p) => p.id !== postId);
+    this.db.postLikes = this.db.postLikes.filter((l) => l.postId !== postId);
+    this.db.postComments = this.db.postComments.filter((c) => c.checkinId !== postId);
+    this.db.checkins = this.db.checkins.filter(
+      (c) => !(c.challengeId === post.challengeId && c.userId === me && c.dayNumber === post.dayNumber)
+    );
+    const ch = this.db.challenges.find((c) => c.id === post.challengeId);
+    const part = this.db.participants.find((p) => p.challengeId === post.challengeId && p.userId === me);
+    if (ch && part) this.recomputeParticipation(ch, part);
+    this.emit();
+  }
+
+  private mediaOfPost(postId: string): ChallengePostMedia[] {
+    return this.orderedMedia(postId);
+  }
+
+  /** Mirror the SQL ledger projection: one check-in row per daily post. */
+  private syncLedger(post: ChallengePost) {
+    const media = this.orderedMedia(post.id);
+    const ck: Checkin = {
+      id: `ck-${post.id}`,
+      challengeId: post.challengeId,
+      userId: post.userId,
+      dayNumber: post.dayNumber,
+      date: post.postDate,
+      note: post.caption,
+      mediaUrl: media[0]?.url ?? null,
+      mediaType: media[0]?.mediaType ?? null,
+      media,
+      createdAt: post.createdAt,
+    };
+    this.db.checkins = this.db.checkins.filter(
+      (c) => !(c.challengeId === post.challengeId && c.userId === post.userId && c.dayNumber === post.dayNumber)
+    );
+    this.db.checkins.push(ck);
+  }
+
+  /** Mirror duel_recompute_participation(): counts, day-slot streaks, completion. */
+  private recomputeParticipation(ch: Challenge, part: Participation): Participation {
+    const mine = this.db.posts
+      .filter((p) => p.challengeId === ch.id && p.userId === part.userId)
+      .sort((a, b) => a.dayNumber - b.dayNumber);
+    const completedDays = mine.length;
+    let streak = 0;
+    if (mine.length) {
+      const top = mine[mine.length - 1].dayNumber;
+      let d = top;
+      const days = new Set(mine.map((p) => p.dayNumber));
+      while (days.has(d)) {
+        streak++;
+        d--;
+      }
+    }
+    part.completedDays = completedDays;
+    part.currentStreak = streak;
+    part.longestStreak = Math.max(part.longestStreak, streak);
+    part.lastCheckinDate = mine.length ? mine[mine.length - 1].postDate : null;
+    if (completedDays >= ch.durationDays && part.status !== 'completed') {
+      part.status = 'completed';
+      part.completedAt = new Date().toISOString();
+      ch.completionCount += 1;
+      this.notify(part.userId, {
+        kind: 'streak',
+        challengeId: ch.id,
+        text: `Challenge complete: ${ch.title}. ${ch.durationDays} days, done. Badge earned.`,
+      });
+    } else if (completedDays < ch.durationDays && part.status === 'completed') {
+      part.status = 'active';
+      part.completedAt = null;
+      ch.completionCount = Math.max(0, ch.completionCount - 1);
+    }
+    return part;
+  }
+
+  private orderedMedia(postId: string): ChallengePostMedia[] {
+    return this.db.postMedia
+      .filter((m) => m.postId === postId)
+      .sort((a, b) => a.sortOrder - b.sortOrder);
+  }
+
+  /** Back-compat check-in call → one-media daily post. */
+  async checkin(
+    challengeId: string,
+    note: string,
+    mediaUrl?: string | null,
+    mediaType?: 'image' | 'video' | null,
+    dayNumber?: number
+  ): Promise<Checkin> {
+    const me = this.requireMe();
+    const existing = this.db.posts.filter((p) => p.challengeId === challengeId && p.userId === me);
+    const day = dayNumber ?? (existing.length ? Math.max(...existing.map((p) => p.dayNumber)) + 1 : 1);
+    const media =
+      mediaUrl && (mediaType === 'image' || mediaType === 'video')
+        ? [{ type: mediaType, url: mediaUrl }]
+        : null;
+    const { post } = await this.submitDailyPost({ challengeId, dayNumber: day, caption: note, media });
+    const ck = this.db.checkins.find(
+      (c) => c.challengeId === challengeId && c.userId === me && c.dayNumber === post.dayNumber
+    );
+    if (!ck) throw new Error('Check-in was not recorded.');
     return clone(ck);
   }
 
@@ -595,41 +700,43 @@ export class LocalAdapter implements DuelAdapter {
 
   /* ------------------------------ social feed ---------------------------- */
 
-  private postLikeCount(checkinId: string): number {
-    return this.db.postLikes.filter((l) => l.checkinId === checkinId).length;
+  private postLikeCount(postId: string): number {
+    return this.db.postLikes.filter((l) => l.postId === postId).length;
   }
 
-  private postCommentCount(checkinId: string): number {
-    return this.db.postComments.filter((c) => c.checkinId === checkinId).length;
+  private postCommentCount(postId: string): number {
+    return this.db.postComments.filter((c) => c.checkinId === postId).length;
   }
 
-  private mapLocalPost(ck: Checkin, likedIds: Set<string>): FeedPost {
-    const ch = this.db.challenges.find((c) => c.id === ck.challengeId);
+  private mapPostToFeed(post: ChallengePost): FeedPost {
+    const ch = this.db.challenges.find((c) => c.id === post.challengeId);
     if (!ch) throw new Error('Challenge not found.');
     const cat = this.db.categories.find((c) => c.id === ch.categoryId);
-    const author = this.db.profiles[ck.userId];
+    const author = this.db.profiles[post.userId];
+    const media = this.orderedMedia(post.id);
     return {
-      id: ck.id,
-      challengeId: ck.challengeId,
+      id: post.id,
+      challengeId: post.challengeId,
       challengeTitle: ch.title,
       durationDays: ch.durationDays,
       categoryId: ch.categoryId,
       categoryName: cat?.name ?? '',
       categoryEmoji: cat?.emoji ?? '•',
-      authorId: ck.userId,
+      authorId: post.userId,
       authorName: author?.name ?? 'DUEL member',
       authorUsername: author?.username ?? 'duelist',
       authorAvatar: author?.avatar ?? null,
-      dayNumber: ck.dayNumber,
-      date: ck.date,
-      note: ck.note,
-      mediaUrl: ck.mediaUrl!,
-      mediaType: ck.mediaType!,
-      createdAt: ck.createdAt,
-      likeCount: this.postLikeCount(ck.id),
-      commentCount: this.postCommentCount(ck.id),
-      iLiked: likedIds.has(ck.id),
-      isMine: ck.userId === this.db.meId,
+      dayNumber: post.dayNumber,
+      date: post.postDate,
+      note: post.caption,
+      mediaUrl: media[0]?.url ?? null,
+      mediaType: media[0]?.mediaType ?? null,
+      media,
+      createdAt: post.createdAt,
+      likeCount: this.postLikeCount(post.id) || post.likeCount,
+      commentCount: this.postCommentCount(post.id) || post.commentCount,
+      iLiked: this.db.postLikes.some((l) => l.postId === post.id && l.userId === this.db.meId),
+      isMine: post.userId === this.db.meId,
     };
   }
 
@@ -637,15 +744,14 @@ export class LocalAdapter implements DuelAdapter {
     const me = this.db.meId;
     const pageSize = Math.min(Math.max(query.pageSize ?? 18, 1), 40);
     const q = query.query.trim().toLowerCase();
-    const likedIds = new Set(this.db.postLikes.filter((l) => l.userId === me).map((l) => l.checkinId));
 
-    let list = this.db.checkins.filter((ck) => {
-      if (!ck.mediaUrl || !ck.mediaType) return false;
-      const ch = this.db.challenges.find((c) => c.id === ck.challengeId);
+    let list = this.db.posts.filter((p) => {
+      const ch = this.db.challenges.find((c) => c.id === p.challengeId);
       if (!ch) return false;
-      if (query.mediaType !== 'all' && ck.mediaType !== query.mediaType) return false;
+      const media = this.orderedMedia(p.id);
+      if (query.mediaType !== 'all' && !media.some((m) => m.mediaType === query.mediaType)) return false;
       if (query.categoryId && ch.categoryId !== query.categoryId) return false;
-      if (q && !(ck.note.toLowerCase().includes(q) || ch.title.toLowerCase().includes(q))) return false;
+      if (q && !(p.caption.toLowerCase().includes(q) || ch.title.toLowerCase().includes(q))) return false;
       return true;
     });
 
@@ -653,7 +759,7 @@ export class LocalAdapter implements DuelAdapter {
 
     if (query.sort === 'latest' || !me) {
       const page = list.slice(query.page * pageSize, (query.page + 1) * pageSize);
-      return { posts: page.map((ck) => this.mapLocalPost(ck, likedIds)), hasMore: (query.page + 1) * pageSize < list.length };
+      return { posts: page.map((p) => this.mapPostToFeed(p)), hasMore: (query.page + 1) * pageSize < list.length };
     }
 
     /* "for you": same weighted formula as SQL duel_feed */
@@ -661,15 +767,15 @@ export class LocalAdapter implements DuelAdapter {
     const kws = buildUserKeywords(this.db, me);
 
     const maxCat = Math.max(0.0001, ...Object.values(aff.categories));
-    const scored = list.map((ck) => {
-      const ch = this.db.challenges.find((c) => c.id === ck.challengeId)!;
+    const scored = list.map((p) => {
+      const ch = this.db.challenges.find((c) => c.id === p.challengeId)!;
       const catRaw = Math.max(0, aff.categories[ch.categoryId] ?? 0);
-      const kwRaw = keywordOverlap(kws, ck.note, ch.title, ch.tags);
+      const kwRaw = keywordOverlap(kws, p.caption, ch.title, ch.tags);
       const creatorRaw = creatorAffinity(this.db, me, ch.creatorId);
-      const engRaw = Math.log(1 + this.postLikeCount(ck.id) + 2 * this.postCommentCount(ck.id));
-      const ageHours = Math.max(0, (Date.now() - new Date(ck.createdAt).getTime()) / 3600_000);
+      const engRaw = Math.log(1 + this.postLikeCount(p.id) + 2 * this.postCommentCount(p.id));
+      const ageHours = Math.max(0, (Date.now() - new Date(p.createdAt).getTime()) / 3600_000);
       const freshRaw = Math.exp(-ageHours / 72);
-      return { ck, catRaw, kwRaw, creatorRaw, engRaw, freshRaw, categoryId: ch.categoryId };
+      return { p, catRaw, kwRaw, creatorRaw, engRaw, freshRaw, categoryId: ch.categoryId };
     });
     const maxKw = Math.max(0.0001, ...scored.map((s) => s.kwRaw));
     const maxCreator = Math.max(0.0001, ...scored.map((s) => Math.log(1 + s.creatorRaw)));
@@ -682,7 +788,7 @@ export class LocalAdapter implements DuelAdapter {
         0.16 * (Math.log(1 + s.creatorRaw) / maxCreator) +
         0.12 * (s.engRaw / maxEng) +
         0.14 * s.freshRaw;
-      const score = base * 100 + this.postJitter(me, s.ck.id) * 0.4;
+      const score = base * 100 + this.postJitter(me, s.p.id) * 0.4;
       return { ...s, score };
     });
 
@@ -692,16 +798,16 @@ export class LocalAdapter implements DuelAdapter {
     const diverse = withScore
       .sort((a, b) => b.score - a.score)
       .filter((s) => {
-        const pc = perChallenge.get(s.ck.challengeId) ?? 0;
+        const pc = perChallenge.get(s.p.challengeId) ?? 0;
         const pcat = perCategory.get(s.categoryId) ?? 0;
         if (pc >= 2 || pcat >= 3) return false;
-        perChallenge.set(s.ck.challengeId, pc + 1);
+        perChallenge.set(s.p.challengeId, pc + 1);
         perCategory.set(s.categoryId, pcat + 1);
         return true;
       });
 
     const page = diverse.slice(query.page * pageSize, (query.page + 1) * pageSize);
-    return { posts: page.map((s) => this.mapLocalPost(s.ck, likedIds)), hasMore: (query.page + 1) * pageSize < diverse.length };
+    return { posts: page.map((s) => this.mapPostToFeed(s.p)), hasMore: (query.page + 1) * pageSize < diverse.length };
   }
 
   /** Stable per-user jitter (mirrors the SQL hashtext jitter). */
@@ -713,24 +819,31 @@ export class LocalAdapter implements DuelAdapter {
   }
 
   async loadChallengePosts(challengeId: string): Promise<FeedPost[]> {
-    const me = this.db.meId;
-    const likedIds = new Set(this.db.postLikes.filter((l) => l.userId === me).map((l) => l.checkinId));
-    return this.db.checkins
-      .filter((c) => c.challengeId === challengeId && c.mediaUrl && c.mediaType)
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    return this.db.posts
+      .filter((p) => p.challengeId === challengeId)
+      .sort((a, b) => a.dayNumber - b.dayNumber || a.createdAt.localeCompare(b.createdAt))
       .slice(0, 250)
-      .map((ck) => this.mapLocalPost(ck, likedIds));
+      .map((p) => this.mapPostToFeed(p));
+  }
+
+  async loadUserPosts(userId: string): Promise<FeedPost[]> {
+    const target = userId === this.db.meId ? this.db.meId : userId;
+    return this.db.posts
+      .filter((p) => p.userId === target)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 120)
+      .map((p) => this.mapPostToFeed(p));
   }
 
   async togglePostLike(postId: string): Promise<boolean> {
     const me = this.requireMe();
-    const idx = this.db.postLikes.findIndex((l) => l.checkinId === postId && l.userId === me);
+    const idx = this.db.postLikes.findIndex((l) => l.postId === postId && l.userId === me);
     if (idx >= 0) {
       this.db.postLikes.splice(idx, 1);
       this.emit();
       return false;
     }
-    this.db.postLikes.push({ checkinId: postId, userId: me, createdAt: new Date().toISOString() });
+    this.db.postLikes.push({ postId, userId: me, createdAt: new Date().toISOString() });
     this.emit();
     return true;
   }

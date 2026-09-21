@@ -1,6 +1,6 @@
 import type { ActivityAction, Settings, UserProfile } from '@/lib/types';
 import type { DuelDB } from './db';
-import type { Challenge, ChallengeComment, Checkin, CreateChallengeInput, FeedMediaType, FeedPost, FeedSort, PostComment } from './types';
+import type { Challenge, ChallengeComment, Checkin, CreateChallengeInput, FeedMediaType, FeedPost, FeedSort, Participation, PostComment, SubmitPostInput } from './types';
 
 /** Filters for the social post feed (Explore). */
 export interface FeedQuery {
@@ -40,13 +40,14 @@ export interface DuelAdapter {
   deleteChallenge(id: string): Promise<void>;
   joinChallenge(id: string): Promise<void>;
   leaveChallenge(id: string): Promise<void>;
-  checkin(
-    challengeId: string,
-    note: string,
-    mediaUrl?: string | null,
-    mediaType?: 'image' | 'video' | null,
-    dayNumber?: number
-  ): Promise<Checkin>;
+  /**
+   * Submit (create or edit) a daily post for a challenge day — description
+   * plus optional photo/video media. This is THE write path for daily content;
+   * the check-in/streak ledger is derived from it.
+   */
+  submitDailyPost(input: SubmitPostInput): Promise<{ post: FeedPost; participation: Participation | null }>;
+  /** Delete one of the caller's own daily posts (RLS enforces ownership). */
+  deletePost(postId: string): Promise<void>;
   toggleLike(id: string): Promise<boolean>;
   toggleSave(id: string): Promise<boolean>;
   shareChallenge(id: string): Promise<void>;
@@ -59,8 +60,10 @@ export interface DuelAdapter {
   /* ---- social post feed (Explore) + per-post interactions ---- */
   /** Public posts ranked for discovery (Explore). */
   loadFeed(query: FeedQuery): Promise<{ posts: FeedPost[]; hasMore: boolean }>;
-  /** All public posts belonging to one challenge (its activity timeline). */
+  /** All daily posts belonging to one challenge (its timeline — every user). */
   loadChallengePosts(challengeId: string): Promise<FeedPost[]>;
+  /** A user's daily posts (profile content grid). */
+  loadUserPosts(userId: string): Promise<FeedPost[]>;
   togglePostLike(postId: string): Promise<boolean>;
   loadPostComments(postId: string): Promise<PostComment[]>;
   addPostComment(postId: string, text: string): Promise<PostComment>;

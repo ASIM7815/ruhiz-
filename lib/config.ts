@@ -2,6 +2,14 @@ export const isSupabaseConfigured = Boolean(
   process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 );
 
+export function supabaseUrl(): string {
+  return process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
+}
+
+export function supabaseAnonKey(): string {
+  return process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
+}
+
 export const isR2Configured = Boolean(
   typeof window === 'undefined'
     ? process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID

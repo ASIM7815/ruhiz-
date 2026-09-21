@@ -9,7 +9,7 @@ import type { DuelAdapter, FeedQuery } from './adapter';
 import { getLocalAdapter } from './local';
 import { SupabaseAdapter } from './supabase';
 import { rankChallenges, trendingCategories, type RankedChallenge } from './recommend';
-import type { Category, Challenge, ChallengeComment, ChallengeView, Checkin, CreateChallengeInput, FeedPost, Participation, PostComment, SearchResults } from './types';
+import type { Category, Challenge, ChallengeComment, ChallengeView, CreateChallengeInput, FeedPost, Participation, PostComment, SearchResults, SubmitPostInput } from './types';
 import { ME_APP_ID } from '@/lib/backend/api';
 
 export interface Toast {
@@ -47,6 +47,7 @@ interface StoreShape {
   refreshTrending: () => Promise<void>;
   loadFeed: (query: FeedQuery) => Promise<{ posts: FeedPost[]; hasMore: boolean }>;
   loadChallengePosts: (challengeId: string) => Promise<FeedPost[]>;
+  loadUserPosts: (userId: string) => Promise<FeedPost[]>;
   togglePostLike: (postId: string) => Promise<boolean>;
   loadPostComments: (postId: string) => Promise<PostComment[]>;
   addPostComment: (postId: string, text: string) => Promise<PostComment | null>;
@@ -70,13 +71,8 @@ interface StoreShape {
   deleteChallenge: (id: string) => Promise<boolean>;
   joinChallenge: (id: string) => Promise<boolean>;
   leaveChallenge: (id: string) => Promise<boolean>;
-  checkin: (
-    challengeId: string,
-    note: string,
-    mediaUrl?: string | null,
-    mediaType?: 'image' | 'video' | null,
-    dayNumber?: number
-  ) => Promise<Checkin | null>;
+  submitDailyPost: (input: SubmitPostInput) => Promise<boolean>;
+  deletePost: (postId: string) => Promise<boolean>;
   toggleLike: (id: string) => Promise<boolean>;
   toggleSave: (id: string) => Promise<boolean>;
   shareChallenge: (id: string) => Promise<boolean>;
@@ -405,6 +401,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     refreshTrending,
     loadFeed: (query) => adapter.loadFeed(query),
     loadChallengePosts: (challengeId) => adapter.loadChallengePosts(challengeId),
+    loadUserPosts: (userId) => adapter.loadUserPosts(userId),
     togglePostLike: (postId) => adapter.togglePostLike(postId),
     loadPostComments: (postId) => adapter.loadPostComments(postId),
     addPostComment: async (postId, text) => {
@@ -439,17 +436,19 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         toast(ch ? `Joined ${ch.title}. Day 1 starts now.` : 'Joined challenge.');
       }), 'Could not join the challenge.'),
     leaveChallenge: (id) => guard(() => adapter.leaveChallenge(id).then(() => toast('Left the challenge.', 'info')), 'Could not leave the challenge.'),
-    checkin: async (challengeId, note, mediaUrl, mediaType, dayNumber) => {
+    submitDailyPost: async (input) => {
       try {
-        const ck = await adapter.checkin(challengeId, note, mediaUrl, mediaType, dayNumber);
-        const part = dbRef.current.participants.find((p) => p.challengeId === challengeId && p.userId === dbRef.current.meId);
-        toast(part?.status === 'completed' ? 'Challenge completed. Legend!' : `Day ${ck.dayNumber} proof logged. Streak alive!`);
-        return ck;
+        await adapter.submitDailyPost(input);
+        const part = dbRef.current.participants.find((p) => p.challengeId === input.challengeId && p.userId === dbRef.current.meId);
+        toast(part?.status === 'completed' ? 'Challenge completed. Legend!' : `Day ${input.dayNumber} posted. Streak alive!`);
+        return true;
       } catch (err: any) {
-        toast(err?.message ?? 'Check-in failed.', 'error');
-        return null;
+        toast(err?.message ?? 'Could not publish the daily post.', 'error');
+        return false;
       }
     },
+    deletePost: (postId) =>
+      guard(() => adapter.deletePost(postId).then(() => toast('Post deleted.', 'info')), 'Could not delete the post.'),
     toggleLike: (id) => guard(async () => { await adapter.toggleLike(id); }, 'Could not update like.'),
     toggleSave: (id) =>
       guard(async () => {

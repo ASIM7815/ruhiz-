@@ -1,16 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { HeadObjectCommand } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { r2Client, R2_BUCKET_NAME, isR2ServerConfigured } from '@/lib/r2/client';
 import { createClient } from '@/lib/supabase/server';
 
 /**
- * Post-upload verification: confirms the object actually landed in R2 and
- * returns its size/content type so the client can show accurate state and
- * safely persist the key on the post row.
- *
- * Key convention (identical to Supabase Storage keys): {kind}/{userId}/{yyyy-mm}/{uuid}.{ext}
- * — the server verifies the key is namespaced to the *session* user before
- * acknowledging it, so users can never reference each other's objects.
+ * Delete an R2 media object. The caller can only delete objects inside their
+ * own key namespace ({kind}/{userId}/...): the session user must match the key
+ * prefix — never trust the client to police this. Supabase Storage and
+ * IndexedDB deletes are enforced by storage RLS / the local device store.
  */
 
 export const runtime = 'nodejs';
@@ -38,26 +35,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid media key' }, { status: 400 });
     }
 
-    // Ownership: the key's user namespace must match the session user.
     const keyOwner = key.split('/')[1];
     if (keyOwner !== user.id) {
-      return NextResponse.json({ error: 'This upload does not belong to you.' }, { status: 403 });
+      return NextResponse.json({ error: 'You can only delete your own files.' }, { status: 403 });
     }
 
     try {
-      const head = await r2Client.send(
-        new HeadObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key })
-      );
-      return NextResponse.json({
-        exists: true,
-        size: head.ContentLength ?? null,
-        contentType: head.ContentType ?? null,
-      });
+      await r2Client.send(new HeadObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key }));
     } catch {
-      return NextResponse.json({ exists: false }, { status: 200 });
+      return NextResponse.json({ deleted: false, error: 'File not found.' }, { status: 404 });
     }
+
+    await r2Client.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key }));
+    return NextResponse.json({ deleted: true });
   } catch (error) {
-    console.error('[upload/complete] error:', error);
-    return NextResponse.json({ error: 'Verification failed' }, { status: 500 });
+    console.error('[upload/delete] error:', error);
+    return NextResponse.json({ error: 'Delete failed' }, { status: 500 });
   }
 }

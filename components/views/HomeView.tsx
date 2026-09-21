@@ -14,6 +14,16 @@ export default function HomeView() {
   const { me, myActive, recommendedViews, trendingViews, db, hydrated } = store;
 
   const bestStreak = useMemo(() => myActive.reduce((m, p) => Math.max(m, p.currentStreak), 0), [myActive]);
+  // Discovery order: a per-visit shuffle of the recommendation list (real rows only).
+  const discoverViews = useMemo(() => {
+    const arr = recommendedViews.slice();
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recommendedViews, hydrated]);
   const checkedToday = myActive.some((p) => p.lastCheckinDate === isoDay(0));
 
   /* Recently created open challenges (excluding ones already joined). */
@@ -138,7 +148,7 @@ export default function HomeView() {
               />
             ) : (
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {recommendedViews.map((v) => (
+                {discoverViews.map((v) => (
                   <ChallengeCard key={v.id} view={v} />
                 ))}
               </div>

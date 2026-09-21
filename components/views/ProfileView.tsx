@@ -1,11 +1,13 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '@/lib/duel/store';
 import { useNav } from '@/components/app/nav';
 import { Icon } from '@/components/ui/Icons';
 import { Avatar, Badge, Cover, EmptyState, GhostButton, Modal, ModalHeader, PrimaryButton, Spinner } from '@/components/ui/Primitives';
 import ChallengeCard from '@/components/challenge/ChallengeCard';
+import { PostCard, PostLightbox } from '@/components/challenge/PostCard';
+import type { FeedPost } from '@/lib/duel/types';
 import { fullDate } from '@/lib/format';
 import { uploadMedia, validateUpload } from '@/lib/upload';
 
@@ -112,6 +114,9 @@ export default function ProfileView({ userId }: { userId?: string }) {
           </div>
         </div>
       </div>
+
+      {/* Daily posts — real challenge_posts rows */}
+      <UserPostsSection userId={isMe ? store.db.meId ?? '' : userId ?? ''} />
 
       {/* Created */}
       <section>
@@ -255,5 +260,55 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <label className="block text-xs font-bold uppercase tracking-wider text-[var(--muted)] mb-1.5">{label}</label>
       {children}
     </div>
+  );
+}
+
+/* ------------------------------ posts grid ------------------------------- */
+
+function UserPostsSection({ userId }: { userId: string }) {
+  const store = useStore();
+  const [posts, setPosts] = useState<FeedPost[] | null>(null);
+  const [openPost, setOpenPost] = useState<FeedPost | null>(null);
+
+  useEffect(() => {
+    if (!userId) {
+      setPosts([]);
+      return;
+    }
+    let alive = true;
+    setPosts(null);
+    store
+      .loadUserPosts(userId)
+      .then((rows) => {
+        if (alive) setPosts(rows);
+      })
+      .catch(() => {
+        if (alive) setPosts([]);
+      });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, store.authed, store.hydrated]);
+
+  return (
+    <section>
+      <h2 className="display text-lg text-[var(--text)] mb-3 flex items-center gap-2">
+        <Icon name="image" size={17} className="text-[var(--brand)]" /> Daily posts
+        {posts !== null && <Badge>{posts.length}</Badge>}
+      </h2>
+      {posts === null ? (
+        <div className="flex justify-center py-8"><Spinner /></div>
+      ) : posts.length === 0 ? (
+        <p className="text-sm text-[var(--muted)]">No day posts yet.</p>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+          {posts.map((p) => (
+            <PostCard key={p.id} post={p} onOpen={setOpenPost} />
+          ))}
+        </div>
+      )}
+      {openPost && <PostLightbox post={openPost} onClose={() => setOpenPost(null)} />}
+    </section>
   );
 }

@@ -1,119 +1,155 @@
-'use client';
-
-import { getMediaBlob } from './idb-storage';
-
 /**
- * Media URL resolution for Cloudflare R2 and client-side persistent storage.
+ * Media URL resolver.
  *
- * References store either:
- *   - a public URL (https://…, /images/…, data:, blob:) → used as-is
- *   - an IndexedDB key ("proofs/local/…") → resolved from IndexedDB to object URL
- *   - an R2 object key ("posts/…", "covers/…", "proofs/…") → resolved
- *     through /api/media which mints a short-lived presigned GET URL.
+ * Media references stored on rows can be:
+ *   - R2 object keys     `posts/{uid}/2026-09/abc.jpg`      → signed GET /api/media?key=…
+ *   - Supabase Storage   `supa://{bucket}/{kind}/{uid}/…`   → public URL (duel-media)
+ *                        or a short-lived signed URL (duel-chat, private)
+ *   - Local device blobs `idb://media:…`                    → object URL from IndexedDB
+ *   - plain https URLs, `/…` paths, data: and blob: URLs    → used as-is
+ *
+ * For Supabase Storage, resolution is only needed for the private chat bucket:
+ * duel-media is a public bucket (standard CDN-cached user-generated content),
+ * duel-chat is private and protected by storage RLS (conversation members).
  */
 
-interface CacheEntry {
-  url: string;
-  expiresAt: number;
+import { createClient } from '@/lib/supabase/client';
+import { isSupabaseConfigured } from '@/lib/config';
+import { peekLocalMedia } from '@/lib/upload';
+
+const objectUrlCache = new Map<string, string>();
+const pendingLookups = new Map<string, Promise<string>>();
+
+/** R2 keys: {kind}/{userId}/{yyyy-mm}/{id}.{ext} */
+export function isR2Key(path?: string | null): path is string {
+  return Boolean(path) && /^(posts|avatars|chats|covers|proofs)\/[A-Za-z0-9_-]+\//.test(path as string);
 }
 
-const cache = new Map<string, CacheEntry>();
-const inflight = new Map<string, Promise<string>>();
-
-const SAFETY_MARGIN_MS = 5 * 60 * 1000; // refresh 5 min before expiry
-const DEFAULT_TTL_MS = 55 * 60 * 1000; // server signs for 1h
-
-/** True when the string is a local IndexedDB reference. */
-export function isLocalIdbKey(value?: string | null): boolean {
-  if (!value) return false;
-  return value.startsWith('proofs/local/') || value.startsWith('idb:');
+export function isSupaRef(ref?: string | null): ref is string {
+  return Boolean(ref) && (ref as string).startsWith('supa://');
 }
 
-/** True when the string is a bare R2 object key rather than a usable URL. */
-export function isR2Key(value?: string | null): value is string {
-  if (!value) return false;
-  if (/^(https?:|data:|blob:)/i.test(value)) return false;
-  if (value.startsWith('/')) return false;
-  if (isLocalIdbKey(value)) return false;
-  // keys look like "posts/<uuid>/…", "avatars/<uuid>/…", "chats/<uuid>/…", "proofs/<uuid>/…"
-  return /^(posts|avatars|chats|covers|proofs)\/[^\s]+$/.test(value);
+export function isIdbRef(ref?: string | null): ref is string {
+  return Boolean(ref) && (ref as string).startsWith('idb://');
 }
 
-/** Resolve any media reference (URL, local key, or R2 key) into a displayable URL. */
-export async function resolveMediaUrl(ref?: string | null, opts?: { force?: boolean }): Promise<string | null> {
-  if (!ref) return null;
+export function needsResolve(ref?: string | null): boolean {
+  return isR2Key(ref) || isSupaRef(ref) || isIdbRef(ref);
+}
 
-  // Plain usable URLs (https://, /images/, data:, blob:)
-  if (!isR2Key(ref) && !isLocalIdbKey(ref)) {
-    return ref;
-  }
+export function r2Src(key: string): string {
+  return `/api/media?key=${encodeURIComponent(key)}`;
+}
 
-  // Check cache
-  if (!opts?.force) {
-    const cached = cache.get(ref);
-    if (cached && cached.expiresAt > Date.now() + SAFETY_MARGIN_MS) return cached.url;
+export function supaPublicSrc(ref: string): string {
+  // supa://bucket/kind/uid/… → client SDK public URL for the object path
+  const withoutScheme = ref.slice('supa://'.length);
+  const slash = withoutScheme.indexOf('/');
+  const bucket = withoutScheme.slice(0, slash);
+  const path = withoutScheme.slice(slash + 1);
+  if (!isSupabaseConfigured) return ref;
+  const supa = createClient();
+  return supa.storage.from(bucket).getPublicUrl(path).data.publicUrl;
+}
 
-    const existing = inflight.get(ref);
-    if (existing) return existing;
-  } else {
-    cache.delete(ref);
-    inflight.delete(ref);
-  }
-
-  // Resolve local IndexedDB storage
-  if (isLocalIdbKey(ref)) {
-    const task = (async () => {
-      try {
-        const blob = await getMediaBlob(ref);
-        if (!blob) return ref; // fallback
-        const objUrl = URL.createObjectURL(blob);
-        cache.set(ref, { url: objUrl, expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
-        return objUrl;
-      } catch {
-        return ref;
-      }
-    })();
-
-    inflight.set(ref, task);
-    try {
-      return await task;
-    } finally {
-      inflight.delete(ref);
+/**
+ * Synchronously map a stored media reference to something an <img>/<video>
+ * can load without waiting. For private stores this is a permissive URL —
+ * call resolveMediaUrl() for the real, signed one.
+ */
+export function peekMediaUrl(path?: string | null): string {
+  if (!path) return '';
+  if (isSupaRef(path)) {
+    const bucket = path.slice('supa://'.length).split('/')[0];
+    if (bucket === 'duel-chat') {
+      // private — the signed URL is fetched asynchronously
+      return objectUrlCache.get(path) ?? '';
     }
+    return supaPublicSrc(path);
   }
+  if (isIdbRef(path)) {
+    return objectUrlCache.get(path) ?? '';
+  }
+  if (isR2Key(path)) {
+    if (typeof window !== 'undefined') {
+      const cached = objectUrlCache.get(path);
+      if (cached) return cached;
+      // kick off the fetch; components re-render via resolveMediaUrl().then
+      void resolveMediaUrl(path);
+    }
+    return r2Src(path);
+  }
+  return path;
+}
 
-  // Resolve R2 via API
-  const task = (async () => {
-    const res = await fetch(`/api/media?key=${encodeURIComponent(ref)}`, { cache: 'no-store' });
-    if (!res.ok) throw new Error(`media signing failed (${res.status})`);
-    const json = (await res.json()) as { url?: string; expiresIn?: number };
-    if (!json.url) throw new Error('media signing returned no url');
-    cache.set(ref, {
-      url: json.url,
-      expiresAt: Date.now() + (json.expiresIn ? json.expiresIn * 1000 : DEFAULT_TTL_MS),
-    });
-    return json.url;
+export async function resolveMediaUrl(
+  path?: string | null,
+  opts?: { force?: boolean }
+): Promise<string> {
+  if (!path) return '';
+  if (!isR2Key(path) && !isSupaRef(path) && !isIdbRef(path)) return path;
+
+  if (opts?.force) {
+    releaseMediaUrl(path);
+  }
+  const cached = objectUrlCache.get(path);
+  if (cached) return cached;
+
+  // Coalesce concurrent requests for the same key.
+  const inflight = pendingLookups.get(path);
+  if (inflight) return inflight;
+
+  const lookup = (async (): Promise<string> => {
+    try {
+      let url = '';
+
+      if (isSupaRef(path)) {
+        const withoutScheme = path.slice('supa://'.length);
+        const slash = withoutScheme.indexOf('/');
+        const bucket = withoutScheme.slice(0, slash);
+        const objectPath = withoutScheme.slice(slash + 1);
+        if (bucket === 'duel-chat' && isSupabaseConfigured) {
+          const supa = createClient();
+          const { data, error } = await supa.storage
+            .from(bucket)
+            .createSignedUrl(objectPath, 3600);
+          url = error ? '' : data?.signedUrl ?? '';
+        } else {
+          url = supaPublicSrc(path);
+        }
+      } else if (isIdbRef(path)) {
+        url = (await peekLocalMedia(path)) ?? '';
+      } else {
+        const res = await fetch(`/api/media?key=${encodeURIComponent(path)}`);
+        if (!res.ok) {
+          console.error(`[media] resolve failed ${res.status} for key`, String(path).slice(0, 64));
+          return path;
+        }
+        const blob = await res.blob();
+        url = URL.createObjectURL(blob);
+      }
+
+      if (url) {
+        objectUrlCache.set(path, url);
+        return url;
+      }
+      return isSupaRef(path) || isIdbRef(path) ? '' : path;
+    } catch (err) {
+      console.error('[media] resolve error for', path.slice(0, 64), err);
+      return isR2Key(path) ? path : '';
+    } finally {
+      pendingLookups.delete(path);
+    }
   })();
 
-  inflight.set(ref, task);
-  try {
-    return await task;
-  } catch {
-    return null; // caller renders fallback
-  } finally {
-    inflight.delete(ref);
-  }
+  pendingLookups.set(path, lookup);
+  return lookup;
 }
 
-/** Synchronous best-effort: returns cached URL or null (for initial render). */
-export function peekMediaUrl(ref?: string | null): string | null {
-  if (!ref) return null;
-  if (!isR2Key(ref) && !isLocalIdbKey(ref)) return ref;
-  const cached = cache.get(ref);
-  return cached && cached.expiresAt > Date.now() + SAFETY_MARGIN_MS ? cached.url : null;
-}
-
-export function clearMediaCache() {
-  cache.clear();
-  inflight.clear();
+/** Drop cached object URLs (e.g. after deleting media). */
+export function releaseMediaUrl(ref?: string | null): void {
+  if (!ref) return;
+  const cached = objectUrlCache.get(ref);
+  if (cached && cached.startsWith('blob:')) URL.revokeObjectURL(cached);
+  objectUrlCache.delete(ref);
 }
