@@ -21,6 +21,8 @@ import ChallengeCard from '@/components/challenge/ChallengeCard';
 import CheckinModal from '@/components/challenge/CheckinModal';
 import CommentsPanel from '@/components/challenge/CommentsPanel';
 import { PostCard, PostLightbox } from '@/components/challenge/PostCard';
+import ChallengeTimeline from '@/components/challenge/ChallengeTimeline';
+import CreatePostModal from '@/components/challenge/CreatePostModal';
 import { compactCount, fullDate } from '@/lib/format';
 import { isoDay } from '@/lib/duel/seed';
 import { calculatePerformance, type DayTimelineItem, type PerformanceReport } from '@/lib/duel/performance';
@@ -37,6 +39,7 @@ export default function ChallengeDetailView({ challengeId }: { challengeId: stri
   const [menuOpen, setMenuOpen] = useState(false);
   const [timelineFilter, setTimelineFilter] = useState<'all' | 'completed' | 'missed' | 'pending'>('all');
   const [lightboxItem, setLightboxItem] = useState<{ checkin: Checkin; dayNumber: number } | null>(null);
+  const [createPostDay, setCreatePostDay] = useState<number | null>(null);
 
   const view = store.findById(challengeId);
 
@@ -526,6 +529,15 @@ export default function ChallengeDetailView({ challengeId }: { challengeId: stri
       {/* Comments Panel */}
       <CommentsPanel challengeId={view.id} />
 
+      {/* Challenge Timeline - Real Posts */}
+      <ChallengeTimeline
+        challengeId={challengeId}
+        durationDays={view.durationDays}
+        isParticipant={!!myPart}
+        userId={store.db.meId}
+        onCreatePost={(dayNumber) => setCreatePostDay(dayNumber)}
+      />
+
       {/* Similar challenges in category */}
       {similar.length > 0 && (
         <section>
@@ -559,6 +571,21 @@ export default function ChallengeDetailView({ challengeId }: { challengeId: stri
           challengeTitle={view.title}
           author={activeUser}
           onClose={() => setLightboxItem(null)}
+        />
+      )}
+
+      {/* Create Post Modal */}
+      {createPostDay && (
+        <CreatePostModal
+          challengeId={challengeId}
+          challengeTitle={view.title}
+          dayNumber={createPostDay}
+          onClose={() => setCreatePostDay(null)}
+          onSuccess={() => {
+            setCreatePostDay(null);
+            // Refresh timeline by triggering a re-render
+            window.location.reload();
+          }}
         />
       )}
     </div>
