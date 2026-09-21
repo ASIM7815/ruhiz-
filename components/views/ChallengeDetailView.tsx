@@ -15,15 +15,17 @@ import {
   ModalHeader,
   PrimaryButton,
   ProgressBar,
+  Spinner,
 } from '@/components/ui/Primitives';
 import ChallengeCard from '@/components/challenge/ChallengeCard';
 import CheckinModal from '@/components/challenge/CheckinModal';
 import CommentsPanel from '@/components/challenge/CommentsPanel';
+import { PostCard, PostLightbox } from '@/components/challenge/PostCard';
 import { compactCount, fullDate } from '@/lib/format';
 import { isoDay } from '@/lib/duel/seed';
 import { calculatePerformance, type DayTimelineItem, type PerformanceReport } from '@/lib/duel/performance';
 import { R2Image, R2Video } from '@/components/ui/Media';
-import type { Checkin } from '@/lib/duel/types';
+import type { Checkin, FeedPost } from '@/lib/duel/types';
 
 export default function ChallengeDetailView({ challengeId }: { challengeId: string }) {
   const store = useStore();
@@ -452,6 +454,9 @@ export default function ChallengeDetailView({ challengeId }: { challengeId: stri
         )}
       </section>
 
+      {/* Challenge Activity — community feed of every participant's posts */}
+      <ChallengeActivitySection challengeId={view.id} />
+
       {/* Challenge Proof Timeline Section */}
       <section className="bg-[var(--card)] border border-[var(--border)] rounded-3xl p-5 sm:p-6 space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -830,5 +835,74 @@ function MediaLightboxModal({
         </div>
       </div>
     </Modal>
+  );
+}
+
+/* ------------------ Challenge Activity (community posts) ------------------ */
+
+function ChallengeActivitySection({ challengeId }: { challengeId: string }) {
+  const store = useStore();
+  const [posts, setPosts] = useState<FeedPost[] | null>(null);
+  const [openPost, setOpenPost] = useState<FeedPost | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    setPosts(null);
+    store
+      .loadChallengePosts(challengeId)
+      .then((rows) => {
+        if (alive) setPosts(rows);
+      })
+      .catch(() => {
+        if (alive) setPosts([]);
+      });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [challengeId, store.authed, store.hydrated]);
+
+  return (
+    <section className="bg-[var(--card)] border border-[var(--border)] rounded-3xl p-5 sm:p-6 space-y-5">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <Icon name="grid" size={20} className="text-[var(--brand)]" />
+            <h2 className="display text-lg sm:text-xl text-[var(--text)] font-bold">Challenge Activity</h2>
+          </div>
+          <p className="text-xs text-[var(--muted)] mt-1">
+            Every photo and video posted by this duel&apos;s challengers — the journey as it happens.
+          </p>
+        </div>
+        {posts && posts.length > 0 && (
+          <span className="text-xs font-semibold text-[var(--muted)] flex-shrink-0">
+            {posts.length} post{posts.length === 1 ? '' : 's'}
+          </span>
+        )}
+      </div>
+
+      {posts === null ? (
+        <div className="flex justify-center py-8">
+          <Spinner />
+        </div>
+      ) : posts.length === 0 ? (
+        <div className="text-center py-8 border border-dashed border-[var(--border)] rounded-2xl">
+          <p className="text-sm font-semibold text-[var(--text)]">No posts yet</p>
+          <p className="text-xs text-[var(--muted)] mt-1 max-w-sm mx-auto">
+            Proof lands here the moment challengers check in with a photo or video. Day 1 lights the fuse.
+          </p>
+        </div>
+      ) : (
+        <div className="flex gap-3 overflow-x-auto scrollbar-hide pb-2 -mx-1 px-1">
+          {posts.map((p) => (
+            <div key={p.id} className="w-40 sm:w-48 flex-shrink-0">
+              <PostCard post={p} onOpen={setOpenPost} />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {openPost && <PostLightbox post={openPost} onClose={() => setOpenPost(null)} />}
+    </section>
   );
 }

@@ -1,6 +1,12 @@
 import type { AppNotification, Settings, Thread, UserProfile } from '@/lib/types';
 import type { ActivityAction } from '@/lib/types';
-import type { Category, Challenge, ChallengeComment, Checkin, Participation } from './types';
+import type { Category, Challenge, ChallengeComment, Checkin, Participation, PostComment } from './types';
+
+export interface PostLikeRow {
+  checkinId: string;
+  userId: string;
+  createdAt: string;
+}
 
 export interface LinkRow {
   challengeId: string;
@@ -50,6 +56,9 @@ export interface DuelDB {
   likes: LinkRow[];
   saves: LinkRow[];
   shares: LinkRow[];
+  /** per-post social data (Explore feed / challenge activity) */
+  postLikes: PostLikeRow[];
+  postComments: PostComment[];
   activities: ActivityRow[];
   searches: SearchRow[];
   notifications: AppNotification[];
@@ -71,6 +80,8 @@ export function emptyDB(): DuelDB {
     likes: [],
     saves: [],
     shares: [],
+    postLikes: [],
+    postComments: [],
     activities: [],
     searches: [],
     notifications: [],

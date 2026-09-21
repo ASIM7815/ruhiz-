@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { StoreProvider, useStore } from '@/lib/duel/store';
 import type { ViewId, ViewRoute } from '@/lib/types';
 import { NavContext } from './nav';
+import { Icon } from '@/components/ui/Icons';
 import TopBar from './TopBar';
 import SideNav from './SideNav';
 import BottomNav from './BottomNav';
@@ -138,6 +139,16 @@ function ShellInner() {
       <div className="min-h-screen bg-[var(--bg)]">
         <TopBar />
         <SideNav />
+        {store.dataMode === 'demo' && (
+          <div className="fixed top-[64px] inset-x-0 z-30 md:ml-[76px] lg:ml-[248px] px-3 sm:px-6">
+            <div className="mx-auto max-w-3xl mt-2 px-4 py-2 rounded-xl bg-[var(--brand-soft)] border border-[var(--brand)]/30 text-[11px] sm:text-xs text-[var(--brand)] flex items-center gap-2">
+              <Icon name="info" size={14} className="flex-shrink-0" />
+              <span>
+                Preview mode — data lives in this browser only. Connect Supabase (<code className="font-mono">.env.local</code>) to go live.
+              </span>
+            </div>
+          </div>
+        )}
 
         <main
           className={`pt-[64px] min-h-screen transition-all duration-300 md:ml-[76px] lg:ml-[248px] ${
