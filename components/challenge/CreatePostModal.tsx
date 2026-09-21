@@ -119,11 +119,14 @@ export default function CreatePostModal({
         }),
       });
 
+      const data = await res.json();
+      
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to create post');
+        console.error('Post creation failed:', data);
+        throw new Error(data.error || `Server error: ${res.status}`);
       }
 
+      console.log('Post created successfully:', data);
       onSuccess();
     } catch (err: any) {
       setError(err.message || 'Failed to publish post');
