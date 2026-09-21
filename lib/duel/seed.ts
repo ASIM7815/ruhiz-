@@ -1,7 +1,15 @@
-import type { Category, Challenge, ChallengeComment, Checkin, Participation } from './types';
-import type { UserProfile } from '@/lib/types';
+import type { Category } from './types';
 
-/** DUEL category taxonomy — mirrors supabase/migrations/20260920000000_duel_platform.sql */
+/**
+ * DUEL category taxonomy — a shared constant that mirrors
+ * supabase/migrations/20260920000000_duel_platform.sql.
+ *
+ * Categories are a fixed taxonomy (not user content): they are seeded into
+ * `duel_categories` by the migration, and this constant is used as a
+ * reference for the landing page and for validating new challenges before
+ * the database list has loaded. No users, challenges or posts are seeded —
+ * all content is created by real members and rendered from the database.
+ */
 export const SEED_CATEGORIES: Category[] = [
   { id: 'coding', name: 'Coding & Building', emoji: '💻', color: '#22d3ee', tagline: 'Ship something every day', sort: 1 },
   { id: 'fitness', name: 'Fitness & Movement', emoji: '🏋️', color: '#f97316', tagline: 'Stronger, faster, further', sort: 2 },
@@ -15,29 +23,7 @@ export const SEED_CATEGORIES: Category[] = [
   { id: 'outdoors', name: 'Outdoors & Adventure', emoji: '⛰️', color: '#2dd4bf', tagline: 'Get outside, every single day', sort: 10 },
 ];
 
-/**
- * No fake users/personas are generated. All user accounts are created by real
- * authenticated sign-ups.
- */
-export const SEED_PROFILES: UserProfile[] = [];
-
-/**
- * No fake challenges or starter posts. Content only exists when created by real users.
- */
-export const SEED_CHALLENGES: Challenge[] = [];
-
-/**
- * No fake comments.
- */
-export const SEED_COMMENTS: ChallengeComment[] = [];
-
-/**
- * No pre-existing fake participations or check-ins.
- */
-export function seedParticipation(): { participants: Participation[]; checkins: Checkin[] } {
-  return { participants: [], checkins: [] };
-}
-
+/** Local YYYY-MM-DD for `offsetFromToday` days from now (0 = today). */
 export function isoDay(offsetFromToday: number): string {
   const d = new Date(Date.now() + offsetFromToday * 86400_000);
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;

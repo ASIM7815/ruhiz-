@@ -12,7 +12,7 @@ export default function ProgressView() {
   const { navigate } = useNav();
   const { db, myActive, myCompleted } = store;
 
-  const myCheckins = useMemo(() => db.checkins.filter((c) => c.userId === db.meId), [db.checkins, db.meId]);
+  const myCheckins = useMemo(() => db.posts.filter((c) => c.userId === db.meId), [db.posts, db.meId]);
 
   const stats = useMemo(() => {
     const bestCurrent = myActive.reduce((m, p) => Math.max(m, p.currentStreak), 0);

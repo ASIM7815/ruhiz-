@@ -12,7 +12,7 @@ export interface UserProfile {
   website: string;
   joined: string; // ISO date
   verified: boolean;
-  persona?: boolean; // seeded community profile (no login)
+  lastSeenAt?: string | null; // ISO date; drives online/offline status
 }
 
 export interface ChatMessage {
@@ -20,7 +20,18 @@ export interface ChatMessage {
   fromMe: boolean;
   text: string;
   at: string;
+  media?: string | null; // R2 key / URL for a photo or video message
+  mediaType?: 'image' | 'video' | null;
   pending?: boolean; // optimistic, not yet confirmed by the server
+}
+
+/** A message privacy request (recipient decides: accept → conversation). */
+export interface MessageRequest {
+  id: string;
+  fromId: string; // app id of the sender
+  toId: string; // app id of the recipient
+  status: 'pending' | 'accepted' | 'declined';
+  createdAt: string;
 }
 
 export interface Thread {
@@ -116,4 +127,4 @@ export interface ViewRoute {
 }
 
 /** Where the store's data currently comes from. */
-export type DataMode = 'demo' | 'supabase' | 'supabase-pending-migration' | 'supabase-error';
+export type DataMode = 'supabase' | 'supabase-pending-migration' | 'supabase-error' | 'supabase-not-configured';

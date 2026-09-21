@@ -1,16 +1,14 @@
 'use client';
 
-import { useState } from 'react';
 import { useStore } from '@/lib/duel/store';
 import { useNav } from '@/components/app/nav';
 import { Icon } from '@/components/ui/Icons';
-import { GhostButton, PrimaryButton, Segmented, Toggle } from '@/components/ui/Primitives';
+import { GhostButton, Segmented, Toggle } from '@/components/ui/Primitives';
 
 export default function SettingsView() {
   const store = useStore();
   const { navigate } = useNav();
   const s = store.db.settings;
-  const [confirmReset, setConfirmReset] = useState(false);
 
   const exportData = () => {
     const blob = new Blob([JSON.stringify(store.db, null, 2)], { type: 'application/json' });
@@ -101,7 +99,7 @@ export default function SettingsView() {
             {s.blocked.length === 0 && <span className="text-xs text-[var(--muted)]">—</span>}
             {s.blocked.map((id) => (
               <button key={id} onClick={() => store.unblockUser(id)} className="px-2.5 py-1 rounded-full bg-[var(--danger-soft)] text-[var(--danger)] text-xs font-semibold hover:opacity-80">
-                {store.getUser(id).username} ✕
+                {store.hasProfile(id) ? store.getUser(id).username : '@unknown'} ✕
               </button>
             ))}
           </div>
@@ -128,28 +126,6 @@ export default function SettingsView() {
             <Icon name="upload" size={15} className="rotate-180" /> Export JSON
           </GhostButton>
         </Row>
-        {store.dataMode === 'demo' && (
-          <Row label="Reset local data" hint="Clears this browser's DUEL database and restores the seed community.">
-            {confirmReset ? (
-              <div className="flex gap-2">
-                <PrimaryButton
-                  onClick={() => {
-                    void store.resetLocal();
-                    setConfirmReset(false);
-                  }}
-                  className="!bg-[var(--danger)] !text-white"
-                >
-                  Confirm reset
-                </PrimaryButton>
-                <GhostButton onClick={() => setConfirmReset(false)}>Cancel</GhostButton>
-              </div>
-            ) : (
-              <GhostButton onClick={() => setConfirmReset(true)}>
-                <Icon name="refresh" size={15} /> Reset
-              </GhostButton>
-            )}
-          </Row>
-        )}
         <Row label="Sign out" hint="Ends your session on this device.">
           <GhostButton onClick={() => void store.signOut().then(() => navigate('home'))}>
             <Icon name="logout" size={15} /> Log out
@@ -158,7 +134,7 @@ export default function SettingsView() {
       </Card>
 
       <p className="text-center text-[11px] text-[var(--muted)] pb-4">
-        DUEL · Challenge A Better You · data mode: {store.dataMode}
+        DUEL · Challenge A Better You
       </p>
     </div>
   );

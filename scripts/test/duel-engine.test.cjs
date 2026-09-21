@@ -1,16 +1,23 @@
 /**
- * DUEL engine functional test (headless, no browser).
- * Exercises the clean LocalAdapter + performance engine + media proof flow:
- * signup → create challenge → upload proof (photos/videos) → performance scoring →
- * timeline tracking → explore feeds → social actions.
+ * DUEL engine unit tests (headless, no browser, no network).
  *
- * Run: node scripts/test/duel-engine.test.cjs
+ * These exercise the *pure* decision logic that the production UI is built on:
+ *   1. Row → domain mappers + IdMapper  (the DB → app contract)
+ *   2. Performance engine                (score, grade, day timeline)
+ *   3. Recommendation engine             (affinity, ranking, diversity, trending)
+ *
+ * There is no local/demo adapter and no fake dataset: every assertion works
+ * from in-memory fixtures shaped exactly like the Supabase rows the mappers
+ * consume, so the logic is verified independently of the live backend.
+ *
+ * Run: npm test   (or: node scripts/test/duel-engine.test.cjs)
  */
 require('sucrase/register/ts');
 const Module = require('module');
 const path = require('path');
 const assert = require('assert');
 
+// Resolve the Next.js `@/` alias to the repo root.
 const origResolve = Module._resolveFilename;
 Module._resolveFilename = function (request, ...args) {
   if (request.startsWith('@/')) {
@@ -19,218 +26,327 @@ Module._resolveFilename = function (request, ...args) {
   return origResolve.call(this, request, ...args);
 };
 
-/* ------------------------- minimal browser stubs ------------------------- */
-const store = new Map();
-const localStorage = {
-  getItem: (k) => (store.has(k) ? store.get(k) : null),
-  setItem: (k, v) => store.set(k, String(v)),
-  removeItem: (k) => store.delete(k),
-};
-global.window = {
-  localStorage,
-  setTimeout: (fn, ms) => setTimeout(fn, Math.min(ms || 0, 5)),
-  clearTimeout: (id) => clearTimeout(id),
-  matchMedia: () => ({ matches: true, addEventListener() {}, removeEventListener() {} }),
-  addEventListener() {},
-  removeEventListener() {},
-  location: { origin: 'http://test.local', hash: '' },
-  history: { pushState() {} },
-  scrollTo() {},
-};
-global.document = {
-  hidden: false,
-  addEventListener() {},
-  removeEventListener() {},
-  documentElement: { setAttribute() {} },
-  body: { style: {} },
-  createElement: () => ({ click() {} }),
-  getElementById: () => null,
-};
-global.navigator = { clipboard: { writeText: async () => {} } };
-if (!global.URL.createObjectURL) global.URL.createObjectURL = () => 'blob:test';
-
-const { getLocalAdapter } = require('../../lib/duel/local');
+const {
+  IdMapper,
+  ME_APP_ID,
+  mapChallenge,
+  mapPost,
+  mapParticipation,
+  mapMessage,
+  mapMessageRequest,
+  mapPostComment,
+} = require('../../lib/backend/api');
 const { calculatePerformance } = require('../../lib/duel/performance');
-const { rankChallenges, computeAffinity } = require('../../lib/duel/recommend');
+const { computeAffinity, rankChallenges, trendingCategories } = require('../../lib/duel/recommend');
+const { emptyDB } = require('../../lib/duel/db');
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let passed = 0;
 function ok(name, cond) {
   assert.ok(cond, `FAILED: ${name}`);
   passed++;
   console.log(`  ✓ ${name}`);
 }
+function eq(name, actual, expected) {
+  assert.deepStrictEqual(actual, expected, `FAILED: ${name} — got ${JSON.stringify(actual)}, want ${JSON.stringify(expected)}`);
+  passed++;
+  console.log(`  ✓ ${name}`);
+}
 
-(async () => {
-  const adapter = getLocalAdapter();
+/* ------------------------------------------------------------------ */
+/* Fixture helpers                                                     */
+/* ------------------------------------------------------------------ */
+const ME_PROFILE = 'pf-me';
+const ALICE_PROFILE = 'pf-alice';
 
-  console.log('\n1) bootstrap (clean database, no fake content, signed out)');
-  const boot = await adapter.bootstrap();
-  ok('categories loaded (10 standard categories)', boot.db.categories.length === 10);
-  ok('no fake starter challenges in DB', boot.db.challenges.length === 0);
-  ok('no fake profiles in DB', Object.keys(boot.db.profiles).length === 0);
-  ok('not authenticated initially', boot.authed === false);
+const challengeRow = (over = {}) => ({
+  id: 'c1',
+  creator_id: ALICE_PROFILE,
+  title: '30 Days Coding Grind',
+  description: 'Ship something every day.',
+  category_id: 'coding',
+  duration_days: 30,
+  difficulty: 'hard',
+  daily_task: 'Commit at least one verified PR.',
+  cover_url: null,
+  tags: ['coding'],
+  status: 'open',
+  participant_count: 1,
+  like_count: 0,
+  comment_count: 0,
+  save_count: 0,
+  share_count: 0,
+  view_count: 0,
+  completion_count: 0,
+  created_at: new Date().toISOString(),
+  ...over,
+});
 
-  console.log('\n2) real user signup + login');
-  await adapter.demoSignUp({ email: 'alex@duel.app', password: 'password123', name: 'Alex Runner', username: 'alex_runner' });
-  ok('session established', adapter.meId !== null);
-  ok('real profile created', adapter.meId.startsWith('u-'));
-  let db = await adapter.bootstrap().then((r) => r.db);
-  ok('account persisted across bootstrap', db.meId === adapter.meId);
-  ok('profile display name matches', db.profiles[adapter.meId].name === 'Alex Runner');
-  await adapter.demoLogout();
-  ok('logout clears session', adapter.meId === null);
-  await adapter.demoLogin('alex@duel.app', 'password123');
-  ok('login restores session', adapter.meId !== null);
-  let threw = false;
-  try { await adapter.demoLogin('alex@duel.app', 'wrong-password'); } catch { threw = true; }
-  ok('wrong password rejected', threw);
+const postRow = (over = {}) => ({
+  id: 'p1',
+  challenge_id: 'c1',
+  user_id: ME_PROFILE,
+  day_number: 1,
+  checkin_date: new Date().toISOString().slice(0, 10),
+  note: 'Day 1 done.',
+  media_url: 'proofs/day1.png',
+  media_type: 'image',
+  like_count: 0,
+  comment_count: 0,
+  save_count: 0,
+  share_count: 0,
+  created_at: new Date().toISOString(),
+  ...over,
+});
 
-  const me = adapter.meId;
-
-  console.log('\n3) create real challenge & verify auto-join');
-  const ch = await adapter.createChallenge({
-    title: '30 Days Coding Grind',
-    description: 'Commit code and solve algorithms every single day for thirty days.',
+function makeChallenge(over = {}) {
+  return {
+    id: 'c',
+    creatorId: 'u2',
+    title: 'Challenge',
+    description: 'desc',
     categoryId: 'coding',
     durationDays: 30,
-    difficulty: 'hard',
-    dailyTask: 'Commit at least one verified pull request or solve 1 DSA problem.',
+    difficulty: 'medium',
+    dailyTask: 'task',
     coverUrl: null,
-    tags: ['coding', 'consistency'],
-  });
-  ok('challenge created', Boolean(ch) && ch.id.startsWith('c-'));
-  ok('participant count starts at 1 for creator', ch.participantCount === 1);
-  ok('like count starts at 0 (no fake likes)', ch.likeCount === 0);
-  db = await adapter.bootstrap().then((r) => r.db);
-  let part = db.participants.find((p) => p.challengeId === ch.id && p.userId === me);
-  ok('creator auto-joined with active status', Boolean(part) && part.status === 'active');
-  ok('completed days starts at 0', part.completedDays === 0);
+    tags: [],
+    status: 'open',
+    participantCount: 1,
+    likeCount: 0,
+    commentCount: 0,
+    saveCount: 0,
+    shareCount: 0,
+    viewCount: 0,
+    completionCount: 0,
+    createdAt: new Date().toISOString(),
+    ...over,
+  };
+}
 
-  console.log('\n4) daily proof check-in with video/photo proof & description');
-  // Day 1: checkin with photo proof
-  const ck1 = await adapter.checkin(
-    ch.id,
-    'Day 1 done: Built the challenge timeline proof cards and committed code.',
-    'proofs/local/day1-screenshot.jpg',
-    'image',
-    1
+function makePost(over = {}) {
+  return {
+    id: 'p',
+    challengeId: 'c',
+    userId: 'me',
+    dayNumber: 1,
+    date: new Date().toISOString().slice(0, 10),
+    note: 'note',
+    mediaUrl: null,
+    mediaType: null,
+    likeCount: 0,
+    commentCount: 0,
+    saveCount: 0,
+    shareCount: 0,
+    createdAt: new Date().toISOString(),
+    ...over,
+  };
+}
+
+function makeParticipation(over = {}) {
+  return {
+    challengeId: 'c',
+    userId: 'me',
+    status: 'active',
+    joinedAt: new Date().toISOString(),
+    currentStreak: 0,
+    longestStreak: 0,
+    completedDays: 0,
+    lastCheckinDate: null,
+    completedAt: null,
+    ...over,
+  };
+}
+
+/* ================================================================== */
+console.log('\n1) Row → domain mappers + IdMapper (DB contract)');
+/* ================================================================== */
+{
+  const ids = new IdMapper(ME_PROFILE);
+
+  eq('IdMapper maps own profile → "me"', ids.app(ME_PROFILE), ME_APP_ID);
+  eq('IdMapper maps "me" → own profile', ids.profile(ME_APP_ID), ME_PROFILE);
+  eq('IdMapper passes through unknown profile ids', ids.app(ALICE_PROFILE), ALICE_PROFILE);
+  eq('IdMapper passes through unknown app ids', ids.profile('u-9'), 'u-9');
+
+  const ch = mapChallenge(challengeRow());
+  eq('mapChallenge maps snake_case counters', ch.participantCount, 1);
+  eq('mapChallenge defaults difficulty', mapChallenge(challengeRow({ difficulty: null })).difficulty, 'medium');
+  eq('mapChallenge carries creator id', ch.creatorId, ALICE_PROFILE);
+
+  const post = mapPost(postRow(), ids);
+  eq('mapPost maps author to "me"', post.userId, ME_APP_ID);
+  eq('mapPost maps day_number → dayNumber', post.dayNumber, 1);
+  eq('mapPost maps checkin_date → date', post.date, new Date().toISOString().slice(0, 10));
+  eq('mapPost carries DB counters', post.likeCount, 0);
+  eq('mapPost media type', post.mediaType, 'image');
+
+  const part = mapParticipation(
+    {
+      challenge_id: 'c1',
+      user_id: ME_PROFILE,
+      status: 'active',
+      joined_at: new Date().toISOString(),
+      current_streak: 4,
+      longest_streak: 6,
+      completed_days: 9,
+      last_checkin_date: '2026-01-05',
+      completed_at: null,
+    },
+    ids
   );
-  ok('check-in day 1 recorded', ck1.dayNumber === 1);
-  ok('photo proof media URL stored', ck1.mediaUrl === 'proofs/local/day1-screenshot.jpg');
-  ok('media type is image', ck1.mediaType === 'image');
-  ok('note/description saved', ck1.note.includes('timeline proof cards'));
+  eq('mapParticipation maps streaks', part.currentStreak, 4);
+  eq('mapParticipation maps completed days', part.completedDays, 9);
 
-  db = await adapter.bootstrap().then((r) => r.db);
-  part = db.participants.find((p) => p.challengeId === ch.id && p.userId === me);
-  ok('current streak is 1', part.currentStreak === 1);
-  ok('completed days incremented to 1', part.completedDays === 1);
-
-  // Updating existing day 1 proof (replacing photo with video proof)
-  const ck1Update = await adapter.checkin(
-    ch.id,
-    'Updated Day 1: Added video recording proof of tests running.',
-    'proofs/local/day1-screenrecording.mp4',
-    'video',
-    1
+  eq(
+    'mapMessage flags own sends (fromMe)',
+    mapMessage({ id: 'm1', sender_id: ME_PROFILE, content: 'hi', media_url: null, media_type: null, created_at: new Date().toISOString() }, ME_PROFILE).fromMe,
+    true
   );
-  ok('same day proof updated', ck1Update.mediaType === 'video' && ck1Update.note.includes('video recording'));
-  db = await adapter.bootstrap().then((r) => r.db);
-  ok('completed days still 1 after update', db.participants.find((p) => p.challengeId === ch.id && p.userId === me).completedDays === 1);
-
-  // Day 2: simulate consecutive day check-in with video proof
-  const internal = adapter;
-  const p = internal.db.participants.find((x) => x.challengeId === ch.id && x.userId === me);
-  const yesterday = new Date(Date.now() - 86400_000).toISOString().slice(0, 10);
-  p.lastCheckinDate = yesterday;
-
-  const ck2 = await adapter.checkin(
-    ch.id,
-    'Day 2 complete: Solved 2 LeetCode medium problems in Go.',
-    'proofs/local/day2-proof.mp4',
-    'video',
-    2
+  eq(
+    'mapMessage flags others’ sends (fromMe=false)',
+    mapMessage({ id: 'm2', sender_id: ALICE_PROFILE, content: 'yo', media_url: null, media_type: null, created_at: new Date().toISOString() }, ME_PROFILE).fromMe,
+    false
   );
-  ok('day 2 check-in recorded', ck2.dayNumber === 2);
-  ok('video proof stored', ck2.mediaUrl === 'proofs/local/day2-proof.mp4' && ck2.mediaType === 'video');
-  db = await adapter.bootstrap().then((r) => r.db);
-  part = db.participants.find((p) => p.challengeId === ch.id && p.userId === me);
-  ok('streak chained to 2', part.currentStreak === 2);
-  ok('completed days is 2', part.completedDays === 2);
 
-  console.log('\n5) dynamic performance score calculation (no hardcoded values)');
-  const challengeCheckins = db.checkins.filter((c) => c.challengeId === ch.id && c.userId === me);
-  const perf = calculatePerformance(ch, part, challengeCheckins);
-  ok('performance report generated', typeof perf.score === 'number');
-  ok('score is between 0 and 100', perf.score >= 0 && perf.score <= 100);
-  ok('grade calculated dynamically', ['S', 'A', 'B', 'C', 'D'].includes(perf.grade));
-  ok('completed days matches checkins (2)', perf.completedDays === 2);
-  ok('total videos proof counted (2)', perf.totalVideos === 2);
-  ok('proof rate calculated (100%)', perf.proofRate === 100);
-  ok('timeline items created for all 30 days', perf.timeline.length === 30);
-  ok('day 1 status is completed', perf.timeline[0].status === 'completed');
-  ok('day 2 status is completed', perf.timeline[1].status === 'completed');
-  ok('summary message generated', perf.summary.length > 10);
-
-  console.log('\n6) real second user joins & social counters');
-  await adapter.demoSignUp({ email: 'bob@duel.app', password: 'password123', name: 'Bob Builder', username: 'bob_builds' });
-  const bobId = adapter.meId;
-  ok('second user signed up', bobId !== me);
-
-  await adapter.joinChallenge(ch.id);
-  await adapter.toggleLike(ch.id);
-  await adapter.toggleSave(ch.id);
-  await adapter.addComment(ch.id, 'Joined this challenge! Excited to post daily video proofs.');
-
-  db = await adapter.bootstrap().then((r) => r.db);
-  const updatedCh = db.challenges.find((c) => c.id === ch.id);
-  ok('participant count accurately bumped to 2', updatedCh.participantCount === 2);
-  ok('like count accurately bumped to 1', updatedCh.likeCount === 1);
-  ok('save count accurately bumped to 1', updatedCh.saveCount === 1);
-  ok('comment count accurately bumped to 1', updatedCh.commentCount === 1);
-
-  // Bob check-in with photo proof
-  const bobCk = await adapter.checkin(
-    ch.id,
-    'Day 1 from Bob: Setup Next.js repo with TypeScript.',
-    'proofs/local/bob-day1.png',
-    'image',
-    1
+  eq(
+    'mapMessageRequest maps endpoints + default status',
+    mapMessageRequest({ id: 'r1', from_user: ALICE_PROFILE, to_user: ME_PROFILE, status: null, created_at: new Date().toISOString() }, ids),
+    { id: 'r1', fromId: ALICE_PROFILE, toId: ME_APP_ID, status: 'pending', createdAt: new Date().toISOString() }
   );
-  ok('second user uploaded photo proof', bobCk.mediaType === 'image');
 
-  console.log('\n7) media feed aggregation (Videos & Photos)');
-  db = await adapter.bootstrap().then((r) => r.db);
-  const allVideoProofs = db.checkins.filter((c) => c.mediaType === 'video' && Boolean(c.mediaUrl));
-  const allPhotoProofs = db.checkins.filter((c) => c.mediaType === 'image' && Boolean(c.mediaUrl));
-  ok('video proofs query returns real videos', allVideoProofs.length >= 2);
-  ok('photo proofs query returns real photos', allPhotoProofs.length >= 1);
-  ok('no fake posts in database', db.checkins.every((c) => c.userId === me || c.userId === bobId));
+  eq(
+    'mapPostComment maps body → text',
+    mapPostComment({ id: 'pc1', post_id: 'p1', user_id: ALICE_PROFILE, body: 'nice work', created_at: new Date().toISOString() }, ids).text,
+    'nice work'
+  );
+}
 
-  console.log('\n8) ownership & permission validation');
-  threw = false;
-  try {
-    await adapter.updateChallenge(ch.id, { title: 'Bob hijacked this' });
-  } catch {
-    threw = true;
+/* ================================================================== */
+console.log('\n2) Performance engine (score, grade, timeline)');
+/* ================================================================== */
+{
+  const ch = makeChallenge({ durationDays: 30 });
+
+  // Fresh duel: no participation, no check-ins → clean slate.
+  const fresh = calculatePerformance(ch, null, []);
+  eq('fresh duel scores 100 (clean slate)', fresh.score, 100);
+  eq('fresh duel grade is S', fresh.grade, 'S');
+  eq('fresh duel timeline spans all days', fresh.timeline.length, 30);
+  eq('fresh duel has zero completed days', fresh.completedDays, 0);
+  eq('fresh duel days are upcoming', fresh.timeline.every((t) => t.status === 'upcoming'), true);
+
+  // 9 straight days with proof, day 10 is today, 20 upcoming.
+  const joined = new Date(Date.now() - 9 * 86400000).toISOString();
+  const posts = [];
+  for (let d = 1; d <= 9; d++) {
+    posts.push(
+      makePost({
+        id: `p${d}`,
+        dayNumber: d,
+        date: new Date(new Date(joined).getTime() + (d - 1) * 86400000).toISOString().slice(0, 10),
+        mediaUrl: d % 2 === 0 ? `proofs/day${d}.mp4` : `proofs/day${d}.png`,
+        mediaType: d % 2 === 0 ? 'video' : 'image',
+      })
+    );
   }
-  ok('non-owner cannot edit someone else’s challenge', threw);
+  const part = makeParticipation({ joinedAt: joined, currentStreak: 9, longestStreak: 9, completedDays: 9 });
+  const rep = calculatePerformance(ch, part, posts);
 
-  // Switch back to creator
-  await adapter.demoLogin('alex@duel.app', 'password123');
-  await adapter.updateChallenge(ch.id, { title: '30 Days Coding Grind (Updated)' });
-  db = await adapter.bootstrap().then((r) => r.db);
-  ok('owner can edit challenge', db.challenges.find((c) => c.id === ch.id).title.includes('(Updated)'));
+  eq('completed days counted from check-ins', rep.completedDays, 9);
+  eq('no missed days in a perfect run', rep.missedDays, 0);
+  eq('today is pending', rep.pendingDays, 1);
+  eq('remaining days are upcoming', rep.upcomingDays, 20);
+  ok('score within 0..100', rep.score >= 0 && rep.score <= 100);
+  ok('perfect run earns an S or A grade', ['S', 'A'].includes(rep.grade));
+  eq('video proofs counted', rep.totalVideos, 4);
+  eq('photo proofs counted', rep.totalPhotos, 5);
+  eq('proof rate is 100% when every day has proof', rep.proofRate, 100);
+  eq('timeline: day 1 completed', rep.timeline[0].status, 'completed');
+  eq('timeline: day 10 pending', rep.timeline[9].status, 'pending');
+  eq('timeline: day 21 upcoming', rep.timeline[20].status, 'upcoming');
+  ok('summary mentions the streak', rep.summary.includes('9'));
 
-  console.log('\n9) reset demo preserves clean slate');
-  await adapter.resetDemo();
-  db = await adapter.bootstrap().then((r) => r.db);
-  ok('reset clears all challenges and profiles', db.challenges.length === 0 && Object.keys(db.profiles).length === 0);
-  ok('categories remain intact (10)', db.categories.length === 10);
+  // A broken run: joined 20 days ago, only 5 days logged, 15 missed, day 21 today.
+  const joined2 = new Date(Date.now() - 20 * 86400000).toISOString();
+  const sparse = [];
+  for (let d = 1; d <= 5; d++) {
+    sparse.push(makePost({ id: `s${d}`, dayNumber: d, date: new Date(new Date(joined2).getTime() + (d - 1) * 86400000).toISOString().slice(0, 10) }));
+  }
+  const part2 = makeParticipation({ joinedAt: joined2, currentStreak: 0, longestStreak: 5, completedDays: 5 });
+  const broken = calculatePerformance(ch, part2, sparse);
+  eq('missed days detected', broken.missedDays, 15);
+  ok('broken run scores below a perfect run', broken.score < rep.score);
+  ok('broken run is graded D/C', ['D', 'C'].includes(broken.grade));
+  eq('no proof → zero photos', broken.totalPhotos, 0);
+}
 
-  console.log(`\n✅ ALL ${passed} ASSERTIONS PASSED\n`);
-  process.exit(0);
-})().catch((err) => {
-  console.error('\n❌ TEST FAILURE:', err);
-  process.exit(1);
-});
+/* ================================================================== */
+console.log('\n3) Recommendation engine (affinity, ranking, diversity)');
+/* ================================================================== */
+{
+  const db = emptyDB();
+  db.categories = [
+    { id: 'coding', name: 'Coding & Building', emoji: '💻', color: '#22d3ee', tagline: '', sort: 1 },
+    { id: 'fitness', name: 'Fitness & Movement', emoji: '🏋️', color: '#f97316', tagline: '', sort: 2 },
+    { id: 'reading', name: 'Reading & Learning', emoji: '📚', color: '#a78bfa', tagline: '', sort: 3 },
+  ];
+
+  const mk = (id, categoryId, over = {}) =>
+    makeChallenge({ id, categoryId, participantCount: 10, likeCount: 5, viewCount: 50, ...over });
+
+  db.challenges = [
+    mk('c-coding-1', 'coding'),
+    mk('c-coding-2', 'coding', { participantCount: 40, likeCount: 20, viewCount: 400 }),
+    mk('c-fitness-1', 'fitness'),
+    mk('c-reading-1', 'reading'),
+    mk('c-reading-2', 'reading', { participantCount: 30, likeCount: 12, viewCount: 300 }),
+    mk('c-joined', 'coding', { status: 'open' }),
+    mk('c-closed', 'reading', { status: 'closed' }),
+    mk('c-no', 'reading', { status: 'open' }),
+  ];
+  db.participants = [{ ...makeParticipation({ challengeId: 'c-joined' }) }];
+  db.activities = [
+    { id: 'a1', userId: 'me', action: 'join', challengeId: 'c-joined', categoryId: 'coding', createdAt: new Date().toISOString() },
+    { id: 'a2', userId: 'me', action: 'like', challengeId: 'c-fitness-1', categoryId: 'fitness', createdAt: new Date().toISOString() },
+    { id: 'a3', userId: 'me', action: 'not_interested', challengeId: 'c-no', categoryId: 'reading', createdAt: new Date().toISOString() },
+    { id: 'a4', userId: 'someone-else', action: 'join', challengeId: 'c-reading-1', categoryId: 'reading', createdAt: new Date().toISOString() },
+  ];
+  db.searches = [
+    { id: 's1', userId: 'me', query: 'running shoes', createdAt: new Date().toISOString() },
+  ];
+
+  const aff = computeAffinity(db, 'me');
+  eq('affinity: own actions only (join + like = 2 interactions)', aff.interactions, 2);
+  ok('affinity: coding scored from join', (aff.categories.coding ?? 0) > 0);
+  ok('affinity: fitness scored from like', (aff.categories.fitness ?? 0) > 0);
+  ok('affinity: explicit not-interested penalises the category', (aff.categories.reading ?? 0) < 0);
+  eq('affinity: joined challenge recorded for explanations', aff.joinedTitles.coding?.[0], 'Challenge');
+
+  const ranked = rankChallenges(db, 'me', 12);
+  const ids = ranked.map((r) => r.id);
+  ok('ranking: joined challenge excluded', !ids.includes('c-joined'));
+  ok('ranking: closed challenge excluded', !ids.includes('c-closed'));
+  ok('ranking: not-interested challenge excluded', !ids.includes('c-no'));
+  ok('ranking: returns only valid candidates', ids.length === 5 && ids.every((id) => db.challenges.some((c) => c.id === id && c.status === 'open')));
+  ok('ranking: each result carries a reason', ranked.every((r) => typeof r.reason === 'string' && r.reason.length > 0));
+  ok('ranking: scores are finite numbers', ranked.every((r) => Number.isFinite(r.score)));
+
+  // A brand-new user with zero history still gets a full, diverse page.
+  const freshRanked = rankChallenges(db, 'fresh-user', 12);
+  ok('new user: still gets all open candidates (only closed excluded)', freshRanked.length === 7);
+  ok(
+    'new user: reasons are popularity/staff picks, never "because you joined"',
+    freshRanked.every((r) => !r.reason.startsWith('Because you joined'))
+  );
+
+  const trend = trendingCategories(db, 6);
+  ok('trending: returns ranked categories', trend.length === 3);
+  ok(
+    'trending: sorted by participant volume descending',
+    trend.every((t, i) => i === 0 || trend[i - 1].participants >= t.participants)
+  );
+  eq('trending: aggregates challenge counts', trend.find((t) => t.categoryId === 'coding')?.challengeCount, 3);
+}
+
+console.log(`\n✅ ALL ${passed} ASSERTIONS PASSED\n`);
+process.exit(0);

@@ -67,7 +67,7 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** Read a File/Blob as a data URL (used for previews and demo fallbacks). */
+/** Read a File/Blob as a data URL (used for instant previews and as an upload fallback when R2 is not configured). */
 export function fileToDataURL(file: File | Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

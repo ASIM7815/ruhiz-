@@ -18,23 +18,36 @@ import {
 } from '@/components/ui/Primitives';
 import ChallengeCard from '@/components/challenge/ChallengeCard';
 import CheckinModal from '@/components/challenge/CheckinModal';
+import PostCard from '@/components/posts/PostCard';
+import PostLightbox from '@/components/posts/PostLightbox';
 import CommentsPanel from '@/components/challenge/CommentsPanel';
 import { compactCount, fullDate } from '@/lib/format';
 import { isoDay } from '@/lib/duel/seed';
-import { calculatePerformance, type DayTimelineItem, type PerformanceReport } from '@/lib/duel/performance';
-import { R2Image, R2Video } from '@/components/ui/Media';
-import type { Checkin } from '@/lib/duel/types';
+import { calculatePerformance, type PerformanceReport } from '@/lib/duel/performance';
+import type { ChallengePost } from '@/lib/duel/types';
 
+/**
+ * CHALLENGE VIEW = EVERYTHING HAPPENING INSIDE THAT CHALLENGE.
+ *
+ * Two clearly separated concepts, top to bottom:
+ *   1. Challenge information — cover, creator, category, duration, difficulty,
+ *      description, rules, daily task, participants, join/save/share.
+ *   2. Challenge activity — the posts participants log (photo/video +
+ *      description + day number), each with real likes/comments/saves/shares.
+ *
+ * Plus the participant journey: my day-by-day progress and each challenger's
+ * completion, streak and score — all computed from real posts.
+ */
 export default function ChallengeDetailView({ challengeId }: { challengeId: string }) {
   const store = useStore();
   const { navigate } = useNav();
 
   const [checkinOpen, setCheckinOpen] = useState(false);
   const [checkinDay, setCheckinDay] = useState<number | undefined>(undefined);
-  const [editingCheckin, setEditingCheckin] = useState<Checkin | null>(null);
+  const [editingPost, setEditingPost] = useState<ChallengePost | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [timelineFilter, setTimelineFilter] = useState<'all' | 'completed' | 'missed' | 'pending'>('all');
-  const [lightboxItem, setLightboxItem] = useState<{ checkin: Checkin; dayNumber: number } | null>(null);
+  const [feedUser, setFeedUser] = useState<string>('all');
+  const [openPostId, setOpenPostId] = useState<string | null>(null);
 
   const view = store.findById(challengeId);
 
@@ -43,7 +56,10 @@ export default function ChallengeDetailView({ challengeId }: { challengeId: stri
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [challengeId]);
 
-  // Identify all real participants in the database
+  useEffect(() => {
+    setFeedUser('all');
+  }, [challengeId]);
+
   const participants = useMemo(
     () => store.db.participants.filter((p) => p.challengeId === challengeId),
     [store.db.participants, challengeId]
@@ -52,63 +68,25 @@ export default function ChallengeDetailView({ challengeId }: { challengeId: stri
   const myPart = view?.participation ?? null;
   const isMine = view?.creatorId === store.db.meId;
 
-  // Selected challenger whose proof & performance is being viewed:
-  // Defaults to the current user if joined; otherwise creator or first participant.
-  const [selectedUserId, setSelectedUserId] = useState<string>(() => {
-    if (myPart) return store.db.meId ?? view?.creatorId ?? '';
-    return view?.creatorId ?? '';
-  });
+  const myPosts = useMemo(
+    () => store.db.posts.filter((p) => p.challengeId === challengeId && p.userId === store.db.meId),
+    [store.db.posts, challengeId, store.db.meId]
+  );
 
-  useEffect(() => {
-    if (myPart && !selectedUserId) {
-      setSelectedUserId(store.db.meId ?? '');
-    } else if (!selectedUserId && view?.creatorId) {
-      setSelectedUserId(view.creatorId);
-    }
-  }, [myPart, selectedUserId, store.db.meId, view?.creatorId]);
+  const myPerformance: PerformanceReport = useMemo(() => {
+    if (!view) return emptyReport();
+    return calculatePerformance(view, myPart, myPosts);
+  }, [view, myPart, myPosts]);
 
-  const activeUserId = selectedUserId || (myPart ? store.db.meId : view?.creatorId) || '';
-  const activeUser = store.getUser(activeUserId);
-  const isViewingSelf = activeUserId === store.db.meId;
+  const feedPosts = useMemo(() => {
+    let list = store.db.posts.filter((p) => p.challengeId === challengeId);
+    if (feedUser !== 'all') list = list.filter((p) => p.userId === feedUser);
+    // Only real members: skip rows whose profile no longer resolves.
+    list = list.filter((p) => store.hasProfile(p.userId) || p.userId === store.db.meId);
+    return list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }, [store.db.posts, store.db.meId, challengeId, feedUser, store]);
 
-  const activeParticipation = useMemo(() => {
-    return participants.find((p) => p.userId === activeUserId) ?? (isViewingSelf ? myPart : null);
-  }, [participants, activeUserId, isViewingSelf, myPart]);
-
-  const relevantCheckins = useMemo(() => {
-    return store.db.checkins.filter(
-      (c) => c.challengeId === challengeId && c.userId === activeUserId
-    );
-  }, [store.db.checkins, challengeId, activeUserId]);
-
-  // Dynamic live performance report
-  const performance: PerformanceReport = useMemo(() => {
-    if (!view) {
-      return {
-        score: 0,
-        grade: 'D',
-        gradeLabel: 'Needs Focus',
-        gradeColor: '#f43f5e',
-        completedDays: 0,
-        missedDays: 0,
-        pendingDays: 0,
-        upcomingDays: 0,
-        totalDays: 0,
-        elapsedDays: 0,
-        consistencyRate: 0,
-        completionRate: 0,
-        proofRate: 0,
-        currentStreak: 0,
-        longestStreak: 0,
-        totalCheckinsWithProof: 0,
-        totalVideos: 0,
-        totalPhotos: 0,
-        summary: '',
-        timeline: [],
-      };
-    }
-    return calculatePerformance(view, activeParticipation, relevantCheckins);
-  }, [view, activeParticipation, relevantCheckins]);
+  const openPost = openPostId ? store.findPost(openPostId) : undefined;
 
   if (!view) {
     return (
@@ -134,18 +112,13 @@ export default function ChallengeDetailView({ challengeId }: { challengeId: stri
     if (threadId) navigate('messages', threadId);
   };
 
-  const openCheckinForDay = (day: number, existing?: Checkin) => {
+  const openCheckinForDay = (day: number, existing?: ChallengePost) => {
     setCheckinDay(day);
-    setEditingCheckin(existing ?? null);
+    setEditingPost(existing ?? null);
     setCheckinOpen(true);
   };
 
-  const filteredTimeline = performance.timeline.filter((item) => {
-    if (timelineFilter === 'completed') return item.status === 'completed';
-    if (timelineFilter === 'missed') return item.status === 'missed';
-    if (timelineFilter === 'pending') return item.status === 'pending' || item.status === 'upcoming';
-    return true;
-  });
+  const nextDay = (myPart?.completedDays ?? 0) + 1;
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 fade-in pb-12">
@@ -157,7 +130,9 @@ export default function ChallengeDetailView({ challengeId }: { challengeId: stri
         <Icon name="back" size={16} /> Back
       </button>
 
-      {/* Hero Header */}
+      {/* ================================================================ */}
+      {/* 1. CHALLENGE INFORMATION                                          */}
+      {/* ================================================================ */}
       <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl overflow-hidden">
         <div className="relative h-52 sm:h-64">
           <Cover coverUrl={view.coverUrl} category={view.category} title={view.title} />
@@ -175,7 +150,7 @@ export default function ChallengeDetailView({ challengeId }: { challengeId: stri
         </div>
 
         <div className="p-5 sm:p-6 space-y-6">
-          {/* Real Statistics from database */}
+          {/* Real statistics from database counters */}
           <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 text-center">
             <Stat label="Challengers" value={compactCount(view.participantCount)} icon="people" />
             <Stat label="Likes" value={compactCount(view.likeCount)} icon="heart" />
@@ -194,12 +169,12 @@ export default function ChallengeDetailView({ challengeId }: { challengeId: stri
             ) : myPart.status === 'active' ? (
               <>
                 <PrimaryButton
-                  onClick={() => openCheckinForDay((myPart.completedDays ?? 0) + 1)}
+                  onClick={() => openCheckinForDay(nextDay)}
                   disabled={checkedToday}
                   className="flex-1 sm:flex-none"
                 >
                   <Icon name="check" size={16} strokeWidth={3} />
-                  {checkedToday ? 'Checked in today ✓' : `Check in — Day ${myPart.completedDays + 1}`}
+                  {checkedToday ? 'Checked in today ✓' : `Check in — Day ${nextDay}`}
                 </PrimaryButton>
                 {!isMine && (
                   <GhostButton onClick={() => store.leaveChallenge(view.id)}>
@@ -289,7 +264,7 @@ export default function ChallengeDetailView({ challengeId }: { challengeId: stri
             </div>
           </div>
 
-          {/* Description & Rules */}
+          {/* Description, rules & daily task */}
           <div className="space-y-3 pt-2">
             <p className="text-sm text-[var(--text)] leading-relaxed whitespace-pre-wrap">{view.description}</p>
             <div className="bg-[var(--card-2)] border border-[var(--border)] rounded-2xl p-4 flex gap-3">
@@ -334,191 +309,169 @@ export default function ChallengeDetailView({ challengeId }: { challengeId: stri
         </div>
       </div>
 
-      {/* Performance Scorecard Section */}
-      <section className="bg-[var(--card)] border border-[var(--border)] rounded-3xl p-5 sm:p-6 space-y-5">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
+      {/* ================================================================ */}
+      {/* 2. MY PROGRESS (my journey through this challenge)               */}
+      {/* ================================================================ */}
+      {myPart && (
+        <section className="bg-[var(--card)] border border-[var(--border)] rounded-3xl p-5 sm:p-6 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <Icon name="chart" size={20} className="text-[var(--brand)]" />
-              <h2 className="display text-lg sm:text-xl text-[var(--text)] font-bold">
-                Performance Score & Metrics
-              </h2>
+              <Icon name="flame" size={20} className="text-[var(--brand)]" />
+              <h2 className="display text-lg sm:text-xl text-[var(--text)] font-bold">My progress</h2>
             </div>
-            <p className="text-xs text-[var(--muted)] mt-1">
-              {isViewingSelf
-                ? 'Your live consistency score based on streaks, check-ins, and proof quality.'
-                : `Showing verified performance for @${activeUser?.username || 'challenger'}.`}
-            </p>
-          </div>
-
-          {/* Participant switcher if multiple challengers exist */}
-          {participants.length > 1 && (
-            <div className="flex items-center gap-2 text-xs">
-              <span className="text-[var(--muted)]">Challenger:</span>
-              <select
-                value={activeUserId}
-                onChange={(e) => setSelectedUserId(e.target.value)}
-                className="bg-[var(--card-2)] border border-[var(--border)] rounded-xl px-3 py-1.5 text-xs text-[var(--text)] focus:outline-none focus:ring-1 focus:ring-[var(--brand)]"
-              >
-                {participants.map((p) => {
-                  const u = store.getUser(p.userId);
-                  return (
-                    <option key={p.userId} value={p.userId}>
-                      {u.name} (@{u.username}) {p.userId === store.db.meId ? '(You)' : ''}
-                    </option>
-                  );
-                })}
-              </select>
-            </div>
-          )}
-        </div>
-
-        {/* Score Card Display */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
-          {/* Main Performance Score */}
-          <div className="col-span-2 sm:col-span-1 bg-[var(--card-2)] border border-[var(--border)] rounded-2xl p-4 flex flex-col justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-[var(--muted)]">Performance Score</span>
-            <div className="my-2 flex items-baseline gap-2">
-              <span className="display text-4xl font-extrabold text-[var(--text)]">
-                {performance.score}%
+            <div className="flex items-center gap-3 text-xs text-[var(--muted)]">
+              <span className="flex items-center gap-1">
+                <Icon name="flame" size={13} className={myPart.currentStreak > 0 ? 'text-[var(--brand)] flame-live' : ''} />
+                {myPart.currentStreak}-day streak
               </span>
-              <span
-                className="text-xs font-bold px-2 py-0.5 rounded-full"
-                style={{
-                  backgroundColor: `${performance.gradeColor}22`,
-                  color: performance.gradeColor,
-                  border: `1px solid ${performance.gradeColor}44`,
-                }}
-              >
-                Grade {performance.grade} · {performance.gradeLabel}
-              </span>
+              <span>·</span>
+              <span>best {myPart.longestStreak}</span>
+              <span>·</span>
+              <span>{myPart.completedDays}/{view.durationDays} days</span>
             </div>
-            <ProgressBar value={performance.score} max={100} color={performance.gradeColor} />
           </div>
 
-          {/* Consistency Rate */}
-          <div className="bg-[var(--card-2)] border border-[var(--border)] rounded-2xl p-4 flex flex-col justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-[var(--muted)]">Consistency Rate</span>
-            <div className="my-2">
-              <p className="display text-3xl font-bold text-[var(--brand)]">
-                {performance.consistencyRate}%
-              </p>
-              <p className="text-[11px] text-[var(--muted)] mt-0.5 flex items-center gap-1">
-                <Icon name="flame" size={13} className={performance.currentStreak > 0 ? 'flame-live' : ''} />
-                {performance.currentStreak}-day current streak
-              </p>
-            </div>
-            <ProgressBar value={performance.consistencyRate} max={100} />
+          <ProgressBar value={myPart.completedDays} max={view.durationDays} />
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+            <MiniStat label="Performance" value={`${myPerformance.score}%`} sub={`Grade ${myPerformance.grade} · ${myPerformance.gradeLabel}`} />
+            <MiniStat label="Consistency" value={`${myPerformance.consistencyRate}%`} sub={`${myPerformance.completedDays} completed · ${myPerformance.missedDays} missed`} />
+            <MiniStat label="Proof rate" value={`${myPerformance.proofRate}%`} sub={`${myPerformance.totalVideos} videos · ${myPerformance.totalPhotos} photos`} />
+            <MiniStat
+              label="Current day"
+              value={myPart.status === 'completed' ? 'Done' : `Day ${Math.min(nextDay, view.durationDays)}`}
+              sub={checkedToday ? 'Checked in today' : 'Today is open'}
+            />
           </div>
 
-          {/* Completed vs Missed Days */}
-          <div className="bg-[var(--card-2)] border border-[var(--border)] rounded-2xl p-4 flex flex-col justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-[var(--muted)]">Days Breakdown</span>
-            <div className="my-2 space-y-1">
-              <div className="flex justify-between text-xs">
-                <span className="text-[var(--brand)] font-bold">✓ {performance.completedDays} Completed</span>
-                <span className="text-amber-400 font-bold">✗ {performance.missedDays} Missed</span>
-              </div>
-              <p className="text-[11px] text-[var(--muted)]">
-                {performance.pendingDays > 0 ? `${performance.pendingDays} pending today` : `${performance.upcomingDays} upcoming`}
-              </p>
+          {/* Day grid: which days I completed / missed / have ahead */}
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wider text-[var(--muted)] mb-2">Day map — tap a day to log or edit its proof</p>
+            <div className="grid grid-cols-7 sm:grid-cols-10 gap-1.5">
+              {myPerformance.timeline.map((d) => {
+                const done = d.status === 'completed';
+                const missed = d.status === 'missed';
+                const pending = d.status === 'pending';
+                return (
+                  <button
+                    key={d.dayNumber}
+                    onClick={() => {
+                      if (myPart.status !== 'completed') openCheckinForDay(d.dayNumber, d.checkin);
+                    }}
+                    title={`Day ${d.dayNumber} — ${d.status}`}
+                    className={`h-8 rounded-lg text-[10px] font-bold flex items-center justify-center transition-colors border ${
+                      done
+                        ? 'bg-[var(--brand)]/20 border-[var(--brand)]/50 text-[var(--brand)] hover:bg-[var(--brand)]/30'
+                        : pending
+                          ? 'bg-[var(--brand)]/10 border-[var(--brand)] text-[var(--brand)] animate-pulse'
+                          : missed
+                            ? 'bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20'
+                            : 'bg-[var(--card-2)] border-[var(--border)] text-[var(--muted)] opacity-70'
+                    }`}
+                  >
+                    {d.dayNumber}
+                  </button>
+                );
+              })}
             </div>
-            <ProgressBar value={performance.completedDays} max={view.durationDays} />
           </div>
+        </section>
+      )}
 
-          {/* Verified Media Proofs */}
-          <div className="bg-[var(--card-2)] border border-[var(--border)] rounded-2xl p-4 flex flex-col justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-[var(--muted)]">Verified Proofs</span>
-            <div className="my-2">
-              <p className="display text-3xl font-bold text-[var(--text)]">
-                {performance.totalCheckinsWithProof}
-              </p>
-              <p className="text-[11px] text-[var(--muted)] mt-0.5">
-                {performance.totalVideos} videos · {performance.totalPhotos} photos
-              </p>
-            </div>
-            <div className="text-[11px] font-semibold text-[var(--brand)]">
-              {performance.proofRate}% proof rate
-            </div>
-          </div>
+      {/* ================================================================ */}
+      {/* 3. CHALLENGERS (real participants with real progress)            */}
+      {/* ================================================================ */}
+      <section className="bg-[var(--card)] border border-[var(--border)] rounded-3xl p-5 sm:p-6 space-y-4">
+        <div className="flex items-center gap-2">
+          <Icon name="people" size={20} className="text-[var(--brand)]" />
+          <h2 className="display text-lg sm:text-xl text-[var(--text)] font-bold">
+            Challengers <span className="text-sm text-[var(--muted)] font-normal">({participants.length})</span>
+          </h2>
         </div>
-
-        {/* Performance Summary Banner */}
-        {performance.summary && (
-          <div className="bg-[var(--card-2)]/60 border border-[var(--border)] rounded-2xl p-3.5 flex items-center gap-3 text-xs text-[var(--text)]">
-            <Icon name="bolt" size={18} className="text-[var(--brand)] flex-shrink-0" />
-            <p className="leading-relaxed">{performance.summary}</p>
+        {participants.length === 0 ? (
+          <p className="text-sm text-[var(--muted)]">No challengers yet. {myPart ? '' : 'Join to become the first.'}</p>
+        ) : (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {participants.map((p) => {
+              const u = store.getUser(p.userId);
+              const me = p.userId === store.db.meId;
+              return (
+                <button
+                  key={p.userId}
+                  onClick={() => setFeedUser(feedUser === p.userId ? 'all' : p.userId)}
+                  className={`flex items-center gap-3 p-3 rounded-2xl border text-left transition-colors ${
+                    feedUser === p.userId ? 'border-[var(--brand)]/60 bg-[var(--brand-soft)]' : 'border-[var(--border)] hover:bg-[var(--card-2)]'
+                  }`}
+                >
+                  <Avatar user={u} size={38} />
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-sm font-semibold text-[var(--text)] truncate">
+                      {u.name} {me && <span className="text-[var(--brand)] text-xs">(You)</span>}
+                    </span>
+                    <span className="block text-[11px] text-[var(--muted)]">
+                      Day {p.completedDays}/{view.durationDays} · streak {p.currentStreak} · {Math.round((p.completedDays / Math.max(1, view.durationDays)) * 100)}%
+                      {p.status === 'completed' && ' · 🏆 finished'}
+                    </span>
+                  </span>
+                  <Icon name={feedUser === p.userId ? 'check' : 'eye'} size={14} className={feedUser === p.userId ? 'text-[var(--brand)]' : 'text-[var(--muted)]'} />
+                </button>
+              );
+            })}
           </div>
         )}
       </section>
 
-      {/* Challenge Proof Timeline Section */}
-      <section className="bg-[var(--card)] border border-[var(--border)] rounded-3xl p-5 sm:p-6 space-y-5">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      {/* ================================================================ */}
+      {/* 4. CHALLENGE ACTIVITY — progress posts by participants           */}
+      {/* ================================================================ */}
+      <section className="space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <div className="flex items-center gap-2">
-              <Icon name="calendar" size={20} className="text-[var(--brand)]" />
-              <h2 className="display text-lg sm:text-xl text-[var(--text)] font-bold">
-                Daily Proof & Check-in Timeline
-              </h2>
-            </div>
-            <p className="text-xs text-[var(--muted)] mt-1">
-              Every day’s uploaded photo/video proof, completed task descriptions, and streak log.
+            <h2 className="display text-lg sm:text-xl text-[var(--text)] font-bold flex items-center gap-2">
+              <Icon name="bolt" size={18} className="text-[var(--brand)]" />
+              {feedUser === 'all' ? 'Challenge activity' : 'Posts by'}
+              {feedUser !== 'all' && (
+                <span className="text-[var(--brand)]">{store.getUser(feedUser).name}</span>
+              )}
+            </h2>
+            <p className="text-xs text-[var(--muted)] mt-0.5">
+              {feedPosts.length} real progress post{feedPosts.length === 1 ? '' : 's'} — every photo and video a challenger logged in this challenge.
             </p>
           </div>
-
-          {/* Timeline Filter tabs */}
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
-            <FilterChip
-              label="All Days"
-              count={view.durationDays}
-              active={timelineFilter === 'all'}
-              onClick={() => setTimelineFilter('all')}
-            />
-            <FilterChip
-              label="Completed"
-              count={performance.completedDays}
-              active={timelineFilter === 'completed'}
-              onClick={() => setTimelineFilter('completed')}
-            />
-            <FilterChip
-              label="Missed"
-              count={performance.missedDays}
-              active={timelineFilter === 'missed'}
-              onClick={() => setTimelineFilter('missed')}
-            />
-            <FilterChip
-              label="Pending"
-              count={performance.pendingDays + performance.upcomingDays}
-              active={timelineFilter === 'pending'}
-              onClick={() => setTimelineFilter('pending')}
-            />
-          </div>
+          {feedUser !== 'all' && (
+            <button onClick={() => setFeedUser('all')} className="text-xs font-bold text-[var(--brand)] hover:underline">
+              Show everyone
+            </button>
+          )}
         </div>
 
-        {/* Timeline Grid / Cards */}
-        {filteredTimeline.length === 0 ? (
-          <div className="text-center py-10 bg-[var(--card-2)] rounded-2xl border border-[var(--border)]">
-            <p className="text-sm text-[var(--muted)]">No days match this filter.</p>
+        {feedPosts.length === 0 ? (
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-8 text-center">
+            <Icon name="camera" size={28} className="text-[var(--muted)] mx-auto mb-3" />
+            <p className="text-sm font-semibold text-[var(--text)]">
+              {feedUser === 'all' ? 'No progress posts yet' : 'No posts from this challenger yet'}
+            </p>
+            <p className="text-xs text-[var(--muted)] mt-1">
+              {myPart
+                ? 'Join the journey — upload your first photo or video for today.'
+                : 'Join this challenge and log the first day.'}
+            </p>
+            {myPart && myPart.status === 'active' && (
+              <PrimaryButton className="mt-4" onClick={() => openCheckinForDay(nextDay)}>
+                <Icon name="upload" size={15} /> Log Day {Math.min(nextDay, view.durationDays)}
+              </PrimaryButton>
+            )}
           </div>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2">
-            {filteredTimeline.map((item) => (
-              <TimelineDayCard
-                key={item.dayNumber}
-                item={item}
-                totalDays={view.durationDays}
-                isParticipant={Boolean(myPart)}
-                isViewerOwner={isViewingSelf}
-                onOpenUpload={() => openCheckinForDay(item.dayNumber, item.checkin)}
-                onViewMedia={(ck) => setLightboxItem({ checkin: ck, dayNumber: item.dayNumber })}
-              />
+          <div className="grid gap-4 md:grid-cols-2">
+            {feedPosts.map((post) => (
+              <PostCard key={post.id} post={post} onOpen={() => setOpenPostId(post.id)} onEdit={() => openCheckinForDay(post.dayNumber, post)} />
             ))}
           </div>
         )}
       </section>
 
-      {/* Comments Panel */}
+      {/* Challenge-level comments */}
       <CommentsPanel challengeId={view.id} />
 
       {/* Similar challenges in category */}
@@ -540,24 +493,34 @@ export default function ChallengeDetailView({ challengeId }: { challengeId: stri
         view={view}
         open={checkinOpen}
         dayNumber={checkinDay}
-        initialCheckin={editingCheckin}
+        initialCheckin={editingPost}
         onClose={() => {
           setCheckinOpen(false);
-          setEditingCheckin(null);
+          setEditingPost(null);
         }}
       />
 
-      {/* Full Resolution Media Lightbox Modal */}
-      {lightboxItem && (
-        <MediaLightboxModal
-          item={lightboxItem}
-          challengeTitle={view.title}
-          author={activeUser}
-          onClose={() => setLightboxItem(null)}
+      {/* Post detail with comments */}
+      {openPost && (
+        <PostLightbox
+          post={openPost}
+          onClose={() => setOpenPostId(null)}
+          onEdit={() => openCheckinForDay(openPost.dayNumber, openPost)}
         />
       )}
     </div>
   );
+}
+
+/* ------------------------------ helpers ------------------------------ */
+
+function emptyReport(): PerformanceReport {
+  return {
+    score: 0, grade: 'D', gradeLabel: 'Needs Focus', gradeColor: '#f43f5e',
+    completedDays: 0, missedDays: 0, pendingDays: 0, upcomingDays: 0, totalDays: 0, elapsedDays: 0,
+    consistencyRate: 0, completionRate: 0, proofRate: 0, currentStreak: 0, longestStreak: 0,
+    totalCheckinsWithProof: 0, totalVideos: 0, totalPhotos: 0, summary: '', timeline: [],
+  };
 }
 
 function Stat({ label, value, icon }: { label: string; value: string; icon: string }) {
@@ -570,265 +533,12 @@ function Stat({ label, value, icon }: { label: string; value: string; icon: stri
   );
 }
 
-function FilterChip({
-  label,
-  count,
-  active,
-  onClick,
-}: {
-  label: string;
-  count: number;
-  active: boolean;
-  onClick: () => void;
-}) {
+function MiniStat({ label, value, sub }: { label: string; value: string; sub: string }) {
   return (
-    <button
-      onClick={onClick}
-      className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors flex items-center gap-1.5 border ${
-        active
-          ? 'bg-[var(--brand)] text-black border-[var(--brand)]'
-          : 'bg-[var(--card-2)] text-[var(--muted)] border-[var(--border)] hover:text-[var(--text)]'
-      }`}
-    >
-      <span>{label}</span>
-      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${active ? 'bg-black/20 text-black' : 'bg-black/40 text-[var(--muted)]'}`}>
-        {count}
-      </span>
-    </button>
-  );
-}
-
-/* ------------------------ Timeline Day Card ------------------------ */
-
-function TimelineDayCard({
-  item,
-  totalDays,
-  isParticipant,
-  isViewerOwner,
-  onOpenUpload,
-  onViewMedia,
-}: {
-  item: DayTimelineItem;
-  totalDays: number;
-  isParticipant: boolean;
-  isViewerOwner: boolean;
-  onOpenUpload: () => void;
-  onViewMedia: (ck: Checkin) => void;
-}) {
-  const ck = item.checkin;
-  const isCompleted = item.status === 'completed';
-  const isPending = item.status === 'pending';
-  const isMissed = item.status === 'missed';
-
-  return (
-    <div
-      className={`rounded-2xl border p-4 transition-all flex flex-col justify-between ${
-        isCompleted
-          ? 'bg-[var(--card-2)] border-[var(--border)] hover:border-[var(--brand)]/40'
-          : isPending
-            ? 'bg-[var(--card-2)] border-[var(--brand)]/50 shadow-sm'
-            : isMissed
-              ? 'bg-[var(--card-2)]/60 border-amber-500/30'
-              : 'bg-[var(--card-2)]/40 border-[var(--border)] opacity-60'
-      }`}
-    >
-      <div>
-        {/* Day Card Header */}
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <span
-              className={`w-7 h-7 rounded-lg text-xs font-bold flex items-center justify-center ${
-                isCompleted
-                  ? 'bg-[var(--brand)] text-black'
-                  : isPending
-                    ? 'bg-[var(--brand-soft)] text-[var(--brand)] border border-[var(--brand)]/50'
-                    : isMissed
-                      ? 'bg-amber-500/15 text-amber-400'
-                      : 'bg-[var(--card)] text-[var(--muted)]'
-              }`}
-            >
-              {item.dayNumber}
-            </span>
-            <span className="font-semibold text-sm text-[var(--text)]">
-              Day {item.dayNumber}
-            </span>
-            <span className="text-[11px] text-[var(--muted)]">
-              {item.dateStr ? fullDate(item.dateStr) : `Day ${item.dayNumber} of ${totalDays}`}
-            </span>
-          </div>
-
-          {/* Status Badge */}
-          {isCompleted && (
-            <span className="px-2.5 py-0.5 rounded-full bg-[var(--brand-soft)] text-[var(--brand)] text-[11px] font-bold flex items-center gap-1">
-              <Icon name="check" size={12} strokeWidth={3} /> Completed
-            </span>
-          )}
-          {isPending && (
-            <span className="px-2.5 py-0.5 rounded-full bg-[var(--brand)]/15 text-[var(--brand)] border border-[var(--brand)]/40 text-[11px] font-bold animate-pulse">
-              Today Open
-            </span>
-          )}
-          {isMissed && (
-            <span className="px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400 text-[11px] font-bold">
-              Missed Day
-            </span>
-          )}
-          {item.status === 'upcoming' && (
-            <span className="px-2.5 py-0.5 rounded-full bg-[var(--card)] text-[var(--muted)] text-[11px] font-medium">
-              Upcoming
-            </span>
-          )}
-        </div>
-
-        {/* Day Card Content */}
-        {isCompleted && ck ? (
-          <div className="space-y-3">
-            {/* Uploaded media proof thumbnail */}
-            {ck.mediaUrl && (
-              <div
-                onClick={() => onViewMedia(ck)}
-                className="relative rounded-xl overflow-hidden bg-black aspect-video max-h-48 cursor-pointer group border border-[var(--border)]"
-              >
-                {ck.mediaType === 'video' ? (
-                  <div className="relative w-full h-full flex items-center justify-center">
-                    <R2Video mediaKey={ck.mediaUrl} controls={false} className="w-full h-full object-cover" />
-                    <div className="absolute inset-0 bg-black/30 group-hover:bg-black/10 transition-colors flex items-center justify-center">
-                      <span className="w-10 h-10 rounded-full bg-black/70 text-white flex items-center justify-center group-hover:scale-110 transition-transform">
-                        <Icon name="bolt" size={18} />
-                      </span>
-                    </div>
-                    <span className="absolute bottom-2 right-2 px-2 py-0.5 rounded bg-black/80 text-white text-[10px] font-bold">
-                      VIDEO
-                    </span>
-                  </div>
-                ) : (
-                  <div className="relative w-full h-full">
-                    <R2Image mediaKey={ck.mediaUrl} alt={`Day ${item.dayNumber} proof`} className="w-full h-full object-cover" />
-                    <span className="absolute bottom-2 right-2 px-2 py-0.5 rounded bg-black/80 text-white text-[10px] font-bold">
-                      PHOTO
-                    </span>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Note / Description */}
-            {ck.note ? (
-              <p className="text-xs text-[var(--text)] leading-relaxed whitespace-pre-wrap bg-[var(--card)]/80 p-3 rounded-xl border border-[var(--border)]/60">
-                {ck.note}
-              </p>
-            ) : (
-              <p className="text-xs text-[var(--muted)] italic">Checked in with verified proof.</p>
-            )}
-          </div>
-        ) : isPending ? (
-          <div className="space-y-2 py-2">
-            <p className="text-xs text-[var(--text)]">
-              Today’s check-in window is open. Upload photo or video proof to keep your streak going!
-            </p>
-            {isParticipant && isViewerOwner && (
-              <PrimaryButton onClick={onOpenUpload} className="w-full !py-2 text-xs mt-2">
-                <Icon name="upload" size={14} /> Upload Day {item.dayNumber} Proof
-              </PrimaryButton>
-            )}
-          </div>
-        ) : isMissed ? (
-          <div className="space-y-2 py-1">
-            <p className="text-xs text-[var(--muted)]">
-              No check-in recorded for this day.
-            </p>
-            {isParticipant && isViewerOwner && (
-              <button
-                type="button"
-                onClick={onOpenUpload}
-                className="text-xs font-semibold text-amber-400 hover:underline flex items-center gap-1"
-              >
-                <Icon name="edit" size={13} /> Submit proof for Day {item.dayNumber}
-              </button>
-            )}
-          </div>
-        ) : (
-          <div className="py-2 text-xs text-[var(--muted)]">
-            Day locked until reached in the challenge schedule.
-          </div>
-        )}
-      </div>
-
-      {/* Edit button if completed and viewer owns the record */}
-      {isCompleted && isViewerOwner && (
-        <div className="pt-3 border-t border-[var(--border)]/50 mt-3 flex justify-end">
-          <button
-            type="button"
-            onClick={onOpenUpload}
-            className="text-[11px] font-semibold text-[var(--brand)] hover:underline flex items-center gap-1"
-          >
-            <Icon name="edit" size={12} /> Edit Proof
-          </button>
-        </div>
-      )}
+    <div className="bg-[var(--card-2)] border border-[var(--border)] rounded-2xl p-3">
+      <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--muted)]">{label}</p>
+      <p className="display text-xl text-[var(--text)] mt-1">{value}</p>
+      <p className="text-[10px] text-[var(--muted)] mt-0.5 leading-snug">{sub}</p>
     </div>
-  );
-}
-
-/* -------------------- Lightbox Modal for Full Media -------------------- */
-
-function MediaLightboxModal({
-  item,
-  challengeTitle,
-  author,
-  onClose,
-}: {
-  item: { checkin: Checkin; dayNumber: number };
-  challengeTitle: string;
-  author: any;
-  onClose: () => void;
-}) {
-  const ck = item.checkin;
-
-  return (
-    <Modal open={true} onClose={onClose} labelledBy="proof-lightbox" maxWidth="max-w-3xl">
-      <ModalHeader
-        title={`Day ${item.dayNumber} Proof`}
-        onClose={onClose}
-        subtitle={challengeTitle}
-      />
-
-      <div className="p-5 sm:p-6 space-y-4">
-        {/* Media Player / Image */}
-        <div className="rounded-2xl overflow-hidden bg-black flex items-center justify-center max-h-[65vh]">
-          {ck.mediaType === 'video' ? (
-            <R2Video mediaKey={ck.mediaUrl} controls autoPlay className="w-full max-h-[65vh] object-contain" />
-          ) : (
-            <R2Image mediaKey={ck.mediaUrl} alt={`Day ${item.dayNumber} proof`} className="w-full max-h-[65vh] object-contain" />
-          )}
-        </div>
-
-        {/* Challenger Info and Description */}
-        <div className="space-y-3 pt-2">
-          <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
-            <div className="flex items-center gap-3">
-              <Avatar user={author} size={40} />
-              <div>
-                <p className="text-sm font-semibold text-[var(--text)]">{author?.name}</p>
-                <p className="text-xs text-[var(--muted)]">@{author?.username}</p>
-              </div>
-            </div>
-            <div className="text-right">
-              <span className="text-xs font-bold text-[var(--brand)]">Day {item.dayNumber}</span>
-              <p className="text-[11px] text-[var(--muted)]">{fullDate(ck.date || ck.createdAt)}</p>
-            </div>
-          </div>
-
-          {ck.note && (
-            <div className="bg-[var(--card-2)] p-4 rounded-xl border border-[var(--border)]">
-              <p className="text-xs font-bold uppercase tracking-wider text-[var(--muted)] mb-1">
-                Proof Description
-              </p>
-              <p className="text-sm text-[var(--text)] whitespace-pre-wrap leading-relaxed">{ck.note}</p>
-            </div>
-          )}
-        </div>
-      </div>
-    </Modal>
   );
 }

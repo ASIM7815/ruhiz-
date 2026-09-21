@@ -42,7 +42,7 @@ function stubQueryBuilder(): any {
 
 type BrowserClient = SupabaseClient
 
-/** A harmless stand-in used when Supabase env vars are absent (demo mode). */
+/** A harmless stand-in used when Supabase env vars are absent, so the app can boot and surface a clear configuration error instead of crashing. */
 function createStubClient(): BrowserClient {
   const stub = {
     auth: {

@@ -49,17 +49,39 @@ export interface Participation {
   completedAt: string | null;
 }
 
-export interface Checkin {
+/**
+ * A ChallengePost is one member's daily contribution inside a Challenge
+ * (table: challenge_checkins). The Challenge is the container — category,
+ * duration, daily task; the Posts are the activity happening inside it —
+ * media + description + day number + engagement.
+ */
+export interface ChallengePost {
   id: string;
   challengeId: string;
   userId: string;
   dayNumber: number; // 1-based day of the challenge for this user
   date: string; // yyyy-mm-dd
-  note: string;
+  note: string; // the post description
   mediaUrl?: string | null;
   mediaType?: 'image' | 'video' | null;
+  likeCount: number; // real likes on this post (DB-maintained counter)
+  commentCount: number; // real comments on this post
+  saveCount: number; // real saves on this post
+  shareCount: number; // real shares of this post
   createdAt: string;
 }
+
+/** A comment on a challenge post (table: post_comments). */
+export interface PostComment {
+  id: string;
+  postId: string;
+  userId: string;
+  text: string;
+  createdAt: string;
+}
+
+/** Back-compat alias — a check-in IS a challenge post. */
+export type Checkin = ChallengePost;
 
 export interface ChallengeComment {
   id: string;
