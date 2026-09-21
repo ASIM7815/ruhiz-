@@ -7,30 +7,77 @@ import { Icon } from '@/components/ui/Icons';
 import { Cover, EmptyState, FeedSkeleton, PrimaryButton, ProgressBar } from '@/components/ui/Primitives';
 import ChallengeCard from '@/components/challenge/ChallengeCard';
 import { isoDay } from '@/lib/duel/seed';
+import { timeAgo } from '@/lib/format';
 
+/**
+ * HOME = CHALLENGE DISCOVERY.
+ *
+ * This page is about challenges, not a media feed: recommended, trending,
+ * fresh and already-joined challenges — all real rows from the database with
+ * real counters. When the database has no challenges, the page says exactly
+ * that instead of showing anything invented.
+ */
 export default function HomeView() {
   const store = useStore();
   const { navigate } = useNav();
-  const { me, myActive, recommendedViews, db, hydrated } = store;
+  const { me, myActive, recommendedViews, trendingChallengeViews, db, hydrated } = store;
 
   const bestStreak = useMemo(() => myActive.reduce((m, p) => Math.max(m, p.currentStreak), 0), [myActive]);
   const checkedToday = myActive.some((p) => p.lastCheckinDate === isoDay(0));
 
-  const trending = useMemo(
+  const fresh = useMemo(
     () =>
       db.challenges
-        .filter((c) => c.status === 'open' && !myActive.some((p) => p.challengeId === c.id))
-        .sort((a, b) => b.participantCount + b.likeCount - (a.participantCount + a.likeCount))
+        .filter((c) => c.status === 'open')
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
         .slice(0, 4)
         .map((c) => store.getView(c)),
-    [db.challenges, myActive, store]
+    [db.challenges, store]
+  );
+
+  const myRecentPosts = useMemo(
+    () => db.posts.filter((p) => p.userId === db.meId).slice(0, 5),
+    [db.posts, db.meId]
   );
 
   if (!hydrated) return <FeedSkeleton count={4} />;
 
+  /* ------------------------------------------------------------------ */
+  /* Empty database: honest first-run state                              */
+  /* ------------------------------------------------------------------ */
+  if (db.challenges.length === 0) {
+    return (
+      <div className="max-w-5xl mx-auto fade-in">
+        <section className="relative overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--card)] p-6 sm:p-8 mb-8">
+          <div className="absolute -top-24 -right-24 w-72 h-72 rounded-full bg-[var(--brand)]/10 blur-3xl" />
+          <p className="text-xs font-bold uppercase tracking-[0.2em] text-[var(--brand)] mb-2 relative">Challenge a better you</p>
+          <h1 className="display text-2xl sm:text-4xl text-[var(--text)] leading-tight relative">
+            {greeting()}, {me?.name?.split(' ')[0]}
+          </h1>
+          <p className="text-sm text-[var(--muted)] mt-2 max-w-md relative">
+            Create a real personal challenge, then upload photo or video proof for every day.
+          </p>
+        </section>
+
+        <EmptyState
+          icon="swords"
+          title="No challenges available yet"
+          description="Create the first challenge and start your duel. Real challengers will find it here and join you."
+          action={
+            <div className="flex flex-col sm:flex-row gap-3">
+              <PrimaryButton onClick={() => navigate('create')}>
+                <Icon name="plus" size={15} /> Create the first challenge
+              </PrimaryButton>
+            </div>
+          }
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-5xl mx-auto space-y-8 fade-in">
-      {/* Greeting / streak header */}
+      {/* Greeting / real personal stats */}
       <section className="relative overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--card)] p-6 sm:p-8">
         <div className="absolute -top-24 -right-24 w-72 h-72 rounded-full bg-[var(--brand)]/10 blur-3xl" />
         <div className="relative flex flex-col sm:flex-row sm:items-center gap-5">
@@ -110,7 +157,7 @@ export default function HomeView() {
 
       {/* Recommended */}
       <section>
-        <SectionHeader title="Recommended for you" icon="spark" subtitle="Ranked from your joins, check-ins, saves and searches" />
+        <SectionHeader title="Recommended for you" icon="spark" subtitle="Ranked from your real joins, check-ins, saves and searches" />
         {recommendedViews.length === 0 ? (
           <EmptyState
             icon="target"
@@ -129,41 +176,53 @@ export default function HomeView() {
 
       {/* Trending */}
       <section>
-        <SectionHeader title="Trending this week" icon="trending" action={{ label: 'Explore all', onClick: () => navigate('explore') }} />
+        <SectionHeader title="Trending now" icon="trending" subtitle="Most joined, checked-in and liked in the last 7 days" action={{ label: 'Explore all', onClick: () => navigate('explore') }} />
+        {trendingChallengeViews.length === 0 ? (
+          <div className="text-sm text-[var(--muted)] bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5">
+            Nothing is trending yet — join a challenge and log your first day to start a trend.
+          </div>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {trendingChallengeViews.map((v) => (
+              <ChallengeCard key={v.id} view={v} />
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Recently created */}
+      <section>
+        <SectionHeader title="Fresh challenges" icon="plus" subtitle="Just created by members" />
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {trending.map((v) => (
+          {fresh.map((v) => (
             <ChallengeCard key={v.id} view={v} />
           ))}
         </div>
       </section>
 
-      {/* My recent check-ins */}
+      {/* My recent activity (real posts) */}
       <section className="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5">
-        <SectionHeader title="Latest check-ins" icon="chart" action={{ label: 'Progress', onClick: () => navigate('progress') }} />
+        <SectionHeader title="Your latest posts" icon="chart" action={{ label: 'Progress', onClick: () => navigate('progress') }} />
         <ul className="space-y-2.5 mt-3">
-          {db.checkins
-            .filter((c) => c.userId === store.db.meId)
-            .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-            .slice(0, 5)
-            .map((c) => {
-              const ch = db.challenges.find((x) => x.id === c.challengeId);
-              return (
-                <li key={c.id}>
-                  <button onClick={() => navigate('challenge', c.challengeId)} className="w-full flex items-center gap-3 text-left p-2 rounded-xl hover:bg-[var(--card-2)] transition-colors">
-                    <span className="w-9 h-9 rounded-xl bg-[var(--brand-soft)] text-[var(--brand)] font-bold text-xs flex items-center justify-center flex-shrink-0">
-                      D{c.dayNumber}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-semibold text-[var(--text)] truncate">{ch?.title ?? 'Challenge'}</span>
-                      <span className="block text-xs text-[var(--muted)] truncate">{c.note || 'Checked in'}</span>
-                    </span>
-                    <Icon name="arrowRight" size={14} className="text-[var(--muted)]" />
-                  </button>
-                </li>
-              );
-            })}
-          {db.checkins.filter((c) => c.userId === store.db.meId).length === 0 && (
-            <li className="text-sm text-[var(--muted)] py-2">No check-ins yet — your first day starts when you join a challenge.</li>
+          {myRecentPosts.map((p) => {
+            const ch = db.challenges.find((x) => x.id === p.challengeId);
+            return (
+              <li key={p.id}>
+                <button onClick={() => navigate('challenge', p.challengeId)} className="w-full flex items-center gap-3 text-left p-2 rounded-xl hover:bg-[var(--card-2)] transition-colors">
+                  <span className="w-9 h-9 rounded-xl bg-[var(--brand-soft)] text-[var(--brand)] font-bold text-xs flex items-center justify-center flex-shrink-0">
+                    D{p.dayNumber}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-semibold text-[var(--text)] truncate">{ch?.title ?? 'Challenge'}</span>
+                    <span className="block text-xs text-[var(--muted)] truncate">{p.note || 'Logged the day'} · {timeAgo(p.createdAt)}</span>
+                  </span>
+                  <Icon name="arrowRight" size={14} className="text-[var(--muted)]" />
+                </button>
+              </li>
+            );
+          })}
+          {myRecentPosts.length === 0 && (
+            <li className="text-sm text-[var(--muted)] py-2">No posts yet — your first day starts when you join a challenge.</li>
           )}
         </ul>
       </section>
@@ -188,6 +247,7 @@ function HeroStat({ icon, value, label }: { icon: string; value: string; label: 
     </div>
   );
 }
+
 
 export function SectionHeader({
   title,

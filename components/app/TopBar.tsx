@@ -47,8 +47,8 @@ export default function TopBar() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && submitSearch()}
-              placeholder="Search challenges, categories, people…"
-              aria-label="Search challenges"
+              placeholder="Search posts, people, challenges, or categories…"
+              aria-label="Search posts, people, challenges, or categories"
               className="w-full pl-11 pr-4 py-2.5 bg-white/10 border border-white/15 rounded-full text-sm text-white placeholder:text-white/50 focus:outline-none focus:ring-2 focus:ring-[var(--brand)]/60 focus:bg-white/15 transition-all"
             />
           </div>

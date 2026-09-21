@@ -1,9 +1,15 @@
-import type { AppNotification, Settings, Thread, UserProfile } from '@/lib/types';
+import type { AppNotification, MessageRequest, Settings, Thread, UserProfile } from '@/lib/types';
 import type { ActivityAction } from '@/lib/types';
-import type { Category, Challenge, ChallengeComment, Checkin, Participation } from './types';
+import type { Category, Challenge, ChallengeComment, ChallengePost, Participation, PostComment } from './types';
 
 export interface LinkRow {
   challengeId: string;
+  userId: string;
+  createdAt: string;
+}
+
+export interface PostLinkRow {
+  postId: string;
   userId: string;
   createdAt: string;
 }
@@ -26,26 +32,30 @@ export interface SearchRow {
   createdAt: string;
 }
 
-export interface DemoAccount {
-  email: string;
-  password: string;
-  profileId: string;
-}
-
 /**
- * The normalized DUEL dataset. Both adapters (local storage and Supabase)
- * hydrate this shape so every view renders from one consistent source.
+ * The normalized DUEL dataset. Every view renders from this single source,
+ * which is always real Supabase data (Postgres + RLS). Nothing here is
+ * seeded or fabricated: an empty database renders empty states.
+ *
+ * Hierarchy:  profiles → challenges → challenge_participants → challenge posts
+ *             → media + description + per-post engagement (likes/comments/
+ *             saves/shares, maintained by database triggers).
  */
 export interface DuelDB {
   v: number;
-  /** profile id of the signed-in user (local account or Supabase profile) */
+  /** profile id of the signed-in user (app id "me") */
   meId: string | null;
-  accounts: DemoAccount[];
   profiles: Record<string, UserProfile>;
   categories: Category[];
   challenges: Challenge[];
   participants: Participation[];
-  checkins: Checkin[];
+  /** all public challenge posts (the activity inside each challenge) */
+  posts: ChallengePost[];
+  /** comments on posts (real data, loaded for the posts above) */
+  postComments: PostComment[];
+  /** MY engagement with posts (toggle state for the UI) */
+  myPostLikes: PostLinkRow[];
+  myPostSaves: PostLinkRow[];
   comments: ChallengeComment[];
   likes: LinkRow[];
   saves: LinkRow[];
@@ -54,6 +64,9 @@ export interface DuelDB {
   searches: SearchRow[];
   notifications: AppNotification[];
   threads: Thread[];
+  messageRequests: MessageRequest[];
+  /** server-ranked trending challenge ids (duel_trending RPC), if available */
+  trending: string[];
   settings: Settings;
 }
 
@@ -61,12 +74,14 @@ export function emptyDB(): DuelDB {
   return {
     v: 1,
     meId: null,
-    accounts: [],
     profiles: {},
     categories: [],
     challenges: [],
     participants: [],
-    checkins: [],
+    posts: [],
+    postComments: [],
+    myPostLikes: [],
+    myPostSaves: [],
     comments: [],
     likes: [],
     saves: [],
@@ -75,6 +90,8 @@ export function emptyDB(): DuelDB {
     searches: [],
     notifications: [],
     threads: [],
+    messageRequests: [],
+    trending: [],
     settings: defaultSettings(),
   };
 }

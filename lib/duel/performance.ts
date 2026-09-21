@@ -1,11 +1,11 @@
-import type { Challenge, Checkin, Participation } from './types';
+import type { Challenge, ChallengePost, Participation } from './types';
 import { isoDay } from './seed';
 
 export interface DayTimelineItem {
   dayNumber: number;
   status: 'completed' | 'missed' | 'pending' | 'upcoming';
   dateStr: string; // ISO date YYYY-MM-DD
-  checkin?: Checkin;
+  checkin?: ChallengePost;
 }
 
 export interface PerformanceReport {
@@ -38,14 +38,14 @@ export interface PerformanceReport {
 export function calculatePerformance(
   challenge: Challenge,
   participation: Participation | null,
-  checkins: Checkin[]
+  checkins: ChallengePost[]
 ): PerformanceReport {
   const totalDays = Math.max(1, challenge.durationDays);
   const myCheckins = checkins
     .filter((c) => c.challengeId === challenge.id)
     .sort((a, b) => a.dayNumber - b.dayNumber);
 
-  const checkinByDay = new Map<number, Checkin>();
+  const checkinByDay = new Map<number, ChallengePost>();
   for (const ck of myCheckins) {
     checkinByDay.set(ck.dayNumber, ck);
   }

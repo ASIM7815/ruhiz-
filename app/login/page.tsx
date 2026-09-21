@@ -78,18 +78,6 @@ function LoginInner() {
         </button>
       </form>
 
-      {store.dataMode === 'demo' && (
-        <div className="mt-6 bg-[var(--card)] border border-[var(--border)] rounded-2xl p-4 text-xs text-[var(--muted)] leading-relaxed">
-          <p className="font-bold text-[var(--text)] mb-1 flex items-center gap-1.5">
-            <Icon name="info" size={13} className="text-[#16e08a]" /> Preview mode
-          </p>
-          Accounts live in this browser until Supabase credentials are configured.{' '}
-          <Link href="/signup" className="text-[#16e08a] font-semibold hover:underline">
-            Create yours
-          </Link>{' '}
-          — it takes ten seconds.
-        </div>
-      )}
 
       <p className="text-center text-sm text-[var(--muted)] mt-7">
         New to DUEL?{' '}

@@ -4,517 +4,360 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '@/lib/duel/store';
 import { useNav } from '@/components/app/nav';
 import { Icon } from '@/components/ui/Icons';
-import { Avatar, Badge, EmptyState, FeedSkeleton, Modal, ModalHeader, PrimaryButton, Segmented } from '@/components/ui/Primitives';
+import { EmptyState, FeedSkeleton, PrimaryButton } from '@/components/ui/Primitives';
 import ChallengeCard from '@/components/challenge/ChallengeCard';
-import { durationBucket, type Challenge, type Checkin, type DurationBucket } from '@/lib/duel/types';
-import { R2Image, R2Video } from '@/components/ui/Media';
-import { fullDate } from '@/lib/format';
+import PostCard from '@/components/posts/PostCard';
+import PostLightbox from '@/components/posts/PostLightbox';
+import { ACTION_WEIGHTS } from '@/lib/duel/recommend';
+import type { ChallengePost } from '@/lib/duel/types';
 
-type ExploreTab = 'videos' | 'photos' | 'challenges';
-type SortKey = 'recommended' | 'popular' | 'newest';
-
-interface EnrichedProofItem {
-  checkin: Checkin;
-  challenge: Challenge;
-  author: any;
-}
+/**
+ * EXPLORE = SOCIAL MEDIA DISCOVERY.
+ *
+ * Not another challenge list: this is where members discover real public
+ * media — photos, videos and progress posts — logged inside challenges.
+ * Everything is a real database row; an empty database renders an honest
+ * empty state, never placeholder content.
+ *
+ * Filters: All / Videos / Photos + real categories.
+ * Ordering: Latest, Popular (real engagement), For you (your real behaviour).
+ */
+type MediaFilter = 'all' | 'videos' | 'photos' | `cat:${string}`;
+type SortKey = 'latest' | 'popular' | 'foryou';
 
 export default function ExploreView({ initialQuery = '' }: { initialQuery?: string }) {
   const store = useStore();
   const { navigate } = useNav();
 
-  const [activeTab, setActiveTab] = useState<ExploreTab>('videos');
+  const [filter, setFilter] = useState<MediaFilter>('all');
+  const [sort, setSort] = useState<SortKey>('latest');
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [openPostId, setOpenPostId] = useState<string | null>(null);
   const [query, setQuery] = useState(initialQuery);
-  const [searched, setSearched] = useState(initialQuery);
-  const [category, setCategory] = useState<string | null>(null);
-  const [bucket, setBucket] = useState<DurationBucket | 'any'>('any');
-  const [sort, setSort] = useState<SortKey>('newest');
-  const [lightboxProof, setLightboxProof] = useState<EnrichedProofItem | null>(null);
 
-  const recordedRef = useRef<string>('');
+  const recordedRef = useRef('');
+  const moreRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setQuery(initialQuery);
-    setSearched(initialQuery);
-    if (initialQuery.trim()) {
-      setActiveTab('challenges');
-    }
   }, [initialQuery]);
 
-  // Record searches for recommendation learning
+  // Record searches for recommendation learning (once per distinct query)
   useEffect(() => {
-    if (!searched.trim()) return;
-    if (recordedRef.current === searched) return;
+    const q = query.trim();
+    if (!q || recordedRef.current === q) return;
     const t = window.setTimeout(() => {
-      recordedRef.current = searched;
-      store.recordSearch(searched);
+      recordedRef.current = q;
+      store.recordSearch(q);
     }, 600);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searched]);
+  }, [query]);
 
-  // Extract all real video proofs from the database
-  const videoProofs = useMemo<EnrichedProofItem[]>(() => {
-    const list: EnrichedProofItem[] = [];
-    for (const ck of store.db.checkins) {
-      if (ck.mediaType === 'video' && ck.mediaUrl) {
-        const ch = store.db.challenges.find((c) => c.id === ck.challengeId);
-        if (ch) {
-          const author = store.getUser(ck.userId);
-          list.push({ checkin: ck, challenge: ch, author });
-        }
-      }
-    }
-    return list.sort((a, b) => b.checkin.createdAt.localeCompare(a.checkin.createdAt));
-  }, [store.db.checkins, store.db.challenges, store]);
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (moreRef.current && !moreRef.current.contains(e.target as Node)) setMoreOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, []);
 
-  // Extract all real photo proofs from the database
-  const photoProofs = useMemo<EnrichedProofItem[]>(() => {
-    const list: EnrichedProofItem[] = [];
-    for (const ck of store.db.checkins) {
-      if (ck.mediaType === 'image' && ck.mediaUrl) {
-        const ch = store.db.challenges.find((c) => c.id === ck.challengeId);
-        if (ch) {
-          const author = store.getUser(ck.userId);
-          list.push({ checkin: ck, challenge: ch, author });
-        }
-      }
-    }
-    return list.sort((a, b) => b.checkin.createdAt.localeCompare(a.checkin.createdAt));
-  }, [store.db.checkins, store.db.challenges, store]);
+  /* ---------------------- real post collection ---------------------- */
 
-  // Real challenges list
-  const filteredChallenges = useMemo(() => {
-    let list = store.db.challenges.filter((c) => c.status === 'open');
-    if (searched.trim()) {
-      const r = store.searchAll(searched);
-      list = r.challenges.map((v) => store.db.challenges.find((c) => c.id === v.id)!).filter(Boolean);
+  /** Every real public post whose challenge + author still resolve. */
+  const allPosts = useMemo(() => {
+    const list: { post: ChallengePost; challenge: { id: string; title: string; categoryId: string; durationDays: number } }[] = [];
+    for (const post of store.db.posts) {
+      const ch = store.db.challenges.find((c) => c.id === post.challengeId);
+      if (!ch) continue;
+      if (!store.hasProfile(post.userId) && post.userId !== store.db.meId) continue;
+      list.push({ post, challenge: ch });
     }
-    if (category) list = list.filter((c) => c.categoryId === category);
-    if (bucket !== 'any') list = list.filter((c) => durationBucket(c.durationDays) === bucket);
-    const views = list.map((c) => store.getView(c));
-    if (sort === 'popular') views.sort((a, b) => b.participantCount - a.participantCount);
-    else if (sort === 'newest') views.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    else views.sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || b.participantCount - a.participantCount);
-    return views;
-  }, [store.db.challenges, searched, category, bucket, sort, store]);
+    return list;
+  }, [store.db.posts, store.db.challenges, store]);
+
+  const q = query.trim().toLowerCase();
+
+  const posts = useMemo(() => {
+    let list = allPosts;
+    if (q) {
+      list = list.filter(({ post, challenge }) => {
+        const author = store.getUser(post.userId);
+        return (
+          post.note.toLowerCase().includes(q) ||
+          challenge.title.toLowerCase().includes(q) ||
+          author.name.toLowerCase().includes(q) ||
+          author.username.toLowerCase().includes(q)
+        );
+      });
+    }
+    if (filter === 'videos') list = list.filter((x) => x.post.mediaType === 'video' && x.post.mediaUrl);
+    else if (filter === 'photos') list = list.filter((x) => x.post.mediaType === 'image' && x.post.mediaUrl);
+    else if (filter.startsWith('cat:')) list = list.filter((x) => x.challenge.categoryId === filter.slice(4));
+
+    if (sort === 'popular') {
+      list = [...list].sort((a, b) => b.post.likeCount + b.post.commentCount * 2 - (a.post.likeCount + a.post.commentCount * 2));
+    } else if (sort === 'foryou') {
+      const scored = list.map((x) => ({ x, score: scorePost(x, store.db) }));
+      scored.sort((a, b) => b.score - a.score);
+      list = scored.map((s) => s.x);
+    } else {
+      list = [...list].sort((a, b) => b.post.createdAt.localeCompare(a.post.createdAt));
+    }
+    return list;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allPosts, filter, sort, q, store.db.activities]);
+
+  /** Challenge matches when searching (challenges are discovered on Home). */
+  const searchChallenges = useMemo(() => {
+    if (!q) return [];
+    return store.searchAll(query).challenges.slice(0, 6);
+  }, [q, query, store]);
+
+  /* ---------------------- category chips (real) ---------------------- */
+
+  const categoryCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const ch of store.db.challenges) m.set(ch.categoryId, (m.get(ch.categoryId) ?? 0) + 1);
+    return m;
+  }, [store.db.challenges]);
+
+  const orderedCategories = useMemo(() => {
+    const cats = store.categories.slice();
+    // Categories with the most challenges first, stable by sort order otherwise.
+    cats.sort((a, b) => (categoryCounts.get(b.id) ?? 0) - (categoryCounts.get(a.id) ?? 0) || a.sort - b.sort);
+    return cats;
+  }, [store.categories, categoryCounts]);
+
+  const visibleCats = orderedCategories.slice(0, 6);
+  const moreCats = orderedCategories.slice(6);
 
   if (!store.hydrated) return <FeedSkeleton count={6} />;
 
+  const openPost = openPostId ? store.findPost(openPostId) : undefined;
+  const videoCount = allPosts.filter((x) => x.post.mediaType === 'video' && x.post.mediaUrl).length;
+  const photoCount = allPosts.filter((x) => x.post.mediaType === 'image' && x.post.mediaUrl).length;
+
   return (
-    <div className="max-w-5xl mx-auto space-y-6 fade-in pb-12">
+    <div className="max-w-6xl mx-auto space-y-5 fade-in pb-12">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
-          <h1 className="display text-2xl sm:text-3xl text-[var(--text)] font-bold">Explore</h1>
+          <p className="text-xs font-bold uppercase tracking-[0.2em] text-[var(--brand)] mb-1.5">Explore</p>
+          <h1 className="display text-2xl sm:text-3xl text-[var(--text)] font-bold">Real People. Real Progress.</h1>
           <p className="text-sm text-[var(--muted)] mt-1">
-            Discover real daily challenge proof videos, photos, and live duels.
+            Discover photos and videos from the DUEL community. Find inspiration, learn, and stay motivated.
           </p>
         </div>
 
-        {/* Primary View Switcher: Videos | Photos | Challenges */}
-        <div className="flex bg-[var(--card)] border border-[var(--border)] p-1 rounded-2xl shadow-sm self-start sm:self-auto">
-          <TabButton
-            active={activeTab === 'videos'}
-            onClick={() => setActiveTab('videos')}
-            icon="bolt"
-            label="Videos"
-            count={videoProofs.length}
-          />
-          <TabButton
-            active={activeTab === 'photos'}
-            onClick={() => setActiveTab('photos')}
-            icon="image"
-            label="Photos"
-            count={photoProofs.length}
-          />
-          <TabButton
-            active={activeTab === 'challenges'}
-            onClick={() => setActiveTab('challenges')}
-            icon="swords"
-            label="Challenges"
-            count={store.db.challenges.length}
-          />
+        {/* Sort */}
+        <div className="relative self-start sm:self-auto">
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value as SortKey)}
+            aria-label="Sort posts"
+            className="appearance-none bg-[var(--card)] border border-[var(--border)] rounded-xl pl-4 pr-9 py-2.5 text-sm font-semibold text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--brand)]/60 cursor-pointer"
+          >
+            <option value="latest">Latest</option>
+            <option value="popular">Popular</option>
+            <option value="foryou">For you</option>
+          </select>
+          <Icon name="chevronDown" size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted)] pointer-events-none" />
         </div>
       </div>
 
-      {/* =================================================================== */}
-      {/* TAB 1: VIDEOS FEED (Vertically scrollable / playable video proof)     */}
-      {/* =================================================================== */}
-      {activeTab === 'videos' && (
-        <div className="space-y-6">
-          {videoProofs.length === 0 ? (
-            <EmptyState
-              icon="bolt"
-              title="No proof videos uploaded yet"
-              description="When real challengers complete their daily check-ins with video proof, they will appear in this vertical feed."
-              action={
-                <PrimaryButton onClick={() => navigate('challenges')}>
-                  Go to My Challenges
-                </PrimaryButton>
-              }
-            />
-          ) : (
-            <div className="space-y-6 max-w-xl mx-auto">
-              <p className="text-xs text-[var(--muted)] px-1">
-                Showing {videoProofs.length} verified proof video{videoProofs.length === 1 ? '' : 's'}
-              </p>
-              {videoProofs.map((item) => (
-                <VideoFeedCard
-                  key={item.checkin.id}
-                  item={item}
-                  onOpenChallenge={() => navigate('challenge', item.challenge.id)}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* =================================================================== */}
-      {/* TAB 2: PHOTOS FEED (Visual discovery feed of daily proof photos)    */}
-      {/* =================================================================== */}
-      {activeTab === 'photos' && (
-        <div className="space-y-6">
-          {photoProofs.length === 0 ? (
-            <EmptyState
-              icon="image"
-              title="No proof photos uploaded yet"
-              description="When challengers upload daily photo proofs for their duels, they will be showcased here."
-              action={
-                <PrimaryButton onClick={() => navigate('challenges')}>
-                  Go to My Challenges
-                </PrimaryButton>
-              }
-            />
-          ) : (
-            <div className="space-y-4">
-              <p className="text-xs text-[var(--muted)]">
-                Showing {photoProofs.length} verified proof photo{photoProofs.length === 1 ? '' : 's'}
-              </p>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {photoProofs.map((item) => (
-                  <PhotoFeedCard
-                    key={item.checkin.id}
-                    item={item}
-                    onClick={() => setLightboxProof(item)}
-                    onOpenChallenge={() => navigate('challenge', item.challenge.id)}
-                  />
+      {/* Filters */}
+      <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
+        <Chip active={filter === 'all'} onClick={() => setFilter('all')}>All</Chip>
+        <Chip active={filter === 'videos'} onClick={() => setFilter('videos')} icon="play">
+          Videos
+        </Chip>
+        <Chip active={filter === 'photos'} onClick={() => setFilter('photos')} icon="image">
+          Photos
+        </Chip>
+        {visibleCats.map((c) => (
+          <Chip key={c.id} active={filter === `cat:${c.id}`} onClick={() => setFilter(filter === `cat:${c.id}` ? 'all' : `cat:${c.id}`)}>
+            <span className="mr-1">{c.emoji}</span>
+            {shortName(c.name)}
+          </Chip>
+        ))}
+        {moreCats.length > 0 && (
+          <div className="relative flex-shrink-0" ref={moreRef}>
+            <Chip active={filter.startsWith('cat:') && !visibleCats.some((c) => `cat:${c.id}` === filter)} onClick={() => setMoreOpen((v) => !v)}>
+              More
+              <Icon name="chevronDown" size={12} />
+            </Chip>
+            {moreOpen && (
+              <div className="pop-in absolute left-0 top-full mt-2 w-52 bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-xl z-20 overflow-hidden py-1">
+                {moreCats.map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => {
+                      setFilter(filter === `cat:${c.id}` ? 'all' : `cat:${c.id}`);
+                      setMoreOpen(false);
+                    }}
+                    className={`w-full text-left px-4 py-2.5 text-sm flex items-center gap-2 hover:bg-[var(--card-2)] ${filter === `cat:${c.id}` ? 'text-[var(--brand)] font-bold' : 'text-[var(--text)]'}`}
+                  >
+                    <span>{c.emoji}</span> {c.name}
+                  </button>
                 ))}
               </div>
-            </div>
-          )}
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Search banner */}
+      {q && (
+        <div className="flex items-center gap-3 bg-[var(--card)] border border-[var(--border)] rounded-2xl px-4 py-3">
+          <Icon name="search" size={15} className="text-[var(--muted)]" />
+          <p className="text-sm text-[var(--text)] flex-1 min-w-0 truncate">
+            Results for <span className="font-bold text-[var(--brand)]">“{query.trim()}”</span> — {posts.length} post{posts.length === 1 ? '' : 's'}
+          </p>
+          <button
+            onClick={() => setQuery('')}
+            className="text-xs font-bold text-[var(--muted)] hover:text-[var(--text)] flex items-center gap-1"
+          >
+            Clear <Icon name="close" size={13} />
+          </button>
         </div>
       )}
 
-      {/* =================================================================== */}
-      {/* TAB 3: CHALLENGES DIRECTORY (Real challenges created by users)      */}
-      {/* =================================================================== */}
-      {activeTab === 'challenges' && (
-        <div className="space-y-6">
-          {/* Search Input */}
-          <div className="relative">
-            <Icon name="search" size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
-            <input
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value);
-                setSearched(e.target.value);
-              }}
-              placeholder="Search challenges, categories or creators…"
-              aria-label="Search challenges"
-              className="w-full pl-11 pr-10 py-3.5 bg-[var(--card)] border border-[var(--border)] rounded-2xl text-sm text-[var(--text)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-[var(--brand)]/60"
-            />
-            {query && (
-              <button
-                onClick={() => {
-                  setQuery('');
-                  setSearched('');
-                }}
-                className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-full text-[var(--muted)] hover:bg-[var(--card-2)]"
-                aria-label="Clear search"
-              >
-                <Icon name="close" size={15} />
-              </button>
-            )}
-          </div>
-
-          {/* Filters & Sorting */}
-          <div className="space-y-3">
-            <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
-              <Chip active={category === null} onClick={() => setCategory(null)}>
-                All categories
-              </Chip>
-              {store.categories.map((c) => (
-                <Chip key={c.id} active={category === c.id} onClick={() => setCategory(category === c.id ? null : c.id)}>
-                  <span className="mr-1">{c.emoji}</span>
-                  {c.name}
-                </Chip>
-              ))}
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              <Segmented
-                options={[
-                  { value: 'any' as const, label: 'Any length' },
-                  { value: 'sprint' as const, label: '≤7d' },
-                  { value: 'short' as const, label: '8–14d' },
-                  { value: 'classic' as const, label: '15–30d' },
-                  { value: 'marathon' as const, label: '30d+' },
-                ]}
-                value={bucket}
-                onChange={setBucket}
-              />
-              <div className="ml-auto">
-                <Segmented
-                  options={[
-                    { value: 'newest' as SortKey, label: 'Newest' },
-                    { value: 'popular' as SortKey, label: 'Popular' },
-                    { value: 'recommended' as SortKey, label: 'For you' },
-                  ]}
-                  value={sort}
-                  onChange={setSort}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Challenge Results */}
-          {filteredChallenges.length === 0 ? (
-            <EmptyState
-              icon="search"
-              title="No challenges found"
-              description="No challenges match your search. Create the first challenge in this category!"
-              action={
-                <PrimaryButton onClick={() => navigate('create')}>
+      {/* Post grid */}
+      {posts.length === 0 ? (
+        <EmptyState
+          icon={filter === 'videos' ? 'play' : filter === 'photos' ? 'image' : 'bolt'}
+          title={q ? 'No posts match your search' : 'No public posts yet'}
+          description={
+            q
+              ? 'Try a different keyword, or clear the search to see everything.'
+              : 'When challengers log their daily proof — photos and videos — it appears here. Join a challenge and start the feed.'
+          }
+          action={
+            !q ? (
+              <div className="flex flex-col sm:flex-row gap-3">
+                <PrimaryButton onClick={() => navigate('home')}>Browse challenges</PrimaryButton>
+                <button
+                  onClick={() => navigate('create')}
+                  className="px-5 py-2.5 rounded-xl border border-[var(--border)] text-sm font-semibold text-[var(--text)] hover:bg-[var(--card-2)] transition-colors"
+                >
                   Create a challenge
-                </PrimaryButton>
-              }
-            />
-          ) : (
-            <div className="space-y-3">
-              <p className="text-xs text-[var(--muted)]">
-                {filteredChallenges.length} challenge{filteredChallenges.length === 1 ? '' : 's'} found
-              </p>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {filteredChallenges.map((v) => (
-                  <ChallengeCard key={v.id} view={v} />
-                ))}
+                </button>
               </div>
-            </div>
-          )}
-        </div>
+            ) : undefined
+          }
+        />
+      ) : (
+        <>
+          <p className="text-xs text-[var(--muted)] px-1">
+            {posts.length} real post{posts.length === 1 ? '' : 's'}
+            {filter === 'videos' && ` · ${videoCount} videos total`}
+            {filter === 'photos' && ` · ${photoCount} photos total`}
+          </p>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {posts.map(({ post }) => (
+              <PostCard key={post.id} post={post} onOpen={() => setOpenPostId(post.id)} />
+            ))}
+          </div>
+        </>
       )}
 
-      {/* Lightbox Modal for Photo Inspection */}
-      {lightboxProof && (
-        <Modal open={true} onClose={() => setLightboxProof(null)} maxWidth="max-w-2xl" labelledBy="photo-proof-title">
-          <ModalHeader
-            title={`Day ${lightboxProof.checkin.dayNumber} Proof`}
-            onClose={() => setLightboxProof(null)}
-            subtitle={lightboxProof.challenge.title}
-          />
-          <div className="p-5 space-y-4">
-            <div className="rounded-2xl overflow-hidden bg-black max-h-[60vh] flex items-center justify-center">
-              <R2Image mediaKey={lightboxProof.checkin.mediaUrl} alt="Proof" className="w-full max-h-[60vh] object-contain" />
-            </div>
-            <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
-              <div className="flex items-center gap-3">
-                <Avatar user={lightboxProof.author} size={38} />
-                <div>
-                  <p className="text-sm font-semibold text-[var(--text)]">{lightboxProof.author?.name}</p>
-                  <p className="text-xs text-[var(--muted)]">@{lightboxProof.author?.username}</p>
-                </div>
-              </div>
-              <PrimaryButton onClick={() => { setLightboxProof(null); navigate('challenge', lightboxProof.challenge.id); }} className="!py-1.5 !px-3 text-xs">
-                View Challenge
-              </PrimaryButton>
-            </div>
-            {lightboxProof.checkin.note && (
-              <p className="text-sm text-[var(--text)] leading-relaxed whitespace-pre-wrap bg-[var(--card-2)] p-3.5 rounded-xl border border-[var(--border)]">
-                {lightboxProof.checkin.note}
-              </p>
-            )}
+      {/* Challenge matches while searching */}
+      {q && searchChallenges.length > 0 && (
+        <section className="space-y-3 pt-4">
+          <h2 className="display text-base text-[var(--text)] flex items-center gap-2">
+            <Icon name="swords" size={16} className="text-[var(--brand)]" /> Matching challenges
+          </h2>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {searchChallenges.map((v) => (
+              <ChallengeCard key={v.id} view={v} />
+            ))}
           </div>
-        </Modal>
+        </section>
       )}
+
+      {/* Post detail */}
+      {openPost && <PostLightbox post={openPost} onClose={() => setOpenPostId(null)} />}
     </div>
   );
 }
 
-/* ------------------------------- Subcomponents ------------------------------ */
+/* ------------------------------ helpers ------------------------------ */
 
-function TabButton({
+function shortName(name: string): string {
+  return name.split(' & ')[0].split(' & ')[0];
+}
+
+interface ScoreState {
+  meId: string | null;
+  challenges: { id: string; categoryId: string }[];
+  activities: { userId: string; action: string; challengeId?: string }[];
+}
+
+/**
+ * "For you" ordering — derived only from the member's real recorded
+ * behaviour (joins, likes, check-ins, saves, searches): category affinity +
+ * recent engagement + freshness, with a stable per-user jitter so the feed
+ * feels discoverable without ever showing fake content.
+ */
+function scorePost({ post, challenge }: { post: ChallengePost; challenge: { id: string; categoryId: string } }, state: ScoreState): number {
+  const meId = state.meId ?? '';
+  const challengeByCat = new Map<string, string[]>();
+  for (const c of state.challenges) {
+    const list = challengeByCat.get(c.categoryId) ?? [];
+    list.push(c.id);
+    challengeByCat.set(c.categoryId, list);
+  }
+  const idsOfCat = new Set(challengeByCat.get(challenge.categoryId) ?? []);
+
+  const affinityOf = (catId: string): number => {
+    const ids = new Set(challengeByCat.get(catId) ?? []);
+    let sum = 0;
+    for (const a of state.activities) {
+      if (a.userId !== meId) continue;
+      if (a.challengeId && ids.has(a.challengeId)) sum += ACTION_WEIGHTS[a.action as keyof typeof ACTION_WEIGHTS] ?? 0;
+    }
+    return sum;
+  };
+
+  const affinity = affinityOf(challenge.categoryId);
+  const maxAffinity = Math.max(0.0001, ...[...challengeByCat.keys()].map(affinityOf));
+
+  const ageDays = (Date.now() - new Date(post.createdAt).getTime()) / 86400_000;
+  const fresh = ageDays < 2 ? 5 : ageDays < 7 ? 3 : ageDays < 30 ? 1 : 0;
+  const engagement = post.likeCount * 2 + post.commentCount * 2 + post.saveCount;
+
+  // deterministic per-user jitter (0..2)
+  let h = 0;
+  const s = `${meId}:${post.id}`;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  const jitter = (h % 1000) / 1000 * 2;
+
+  return (affinity / maxAffinity) * 6 + fresh + Math.min(30, engagement * 0.5) + jitter;
+}
+
+function Chip({
   active,
   onClick,
   icon,
-  label,
-  count,
+  children,
 }: {
   active: boolean;
   onClick: () => void;
-  icon: string;
-  label: string;
-  count?: number;
+  icon?: string;
+  children: React.ReactNode;
 }) {
   return (
     <button
       onClick={onClick}
-      className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all ${
-        active
-          ? 'bg-[var(--brand)] text-black shadow-sm'
-          : 'text-[var(--muted)] hover:text-[var(--text)]'
-      }`}
-    >
-      <Icon name={icon} size={16} />
-      <span>{label}</span>
-      {count !== undefined && count > 0 && (
-        <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${active ? 'bg-black/20 text-black' : 'bg-[var(--card-2)] text-[var(--muted)]'}`}>
-          {count}
-        </span>
-      )}
-    </button>
-  );
-}
-
-function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`px-3.5 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all border ${
+      className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all border flex-shrink-0 ${
         active
           ? 'bg-[var(--brand)] text-black border-[var(--brand)]'
           : 'bg-[var(--card)] text-[var(--muted)] border-[var(--border)] hover:text-[var(--text)]'
       }`}
     >
+      {icon && <Icon name={icon} size={13} />}
       {children}
     </button>
-  );
-}
-
-/* -------------------------- Vertical Video Card -------------------------- */
-
-function VideoFeedCard({
-  item,
-  onOpenChallenge,
-}: {
-  item: EnrichedProofItem;
-  onOpenChallenge: () => void;
-}) {
-  const { checkin, challenge, author } = item;
-
-  return (
-    <article className="bg-[var(--card)] border border-[var(--border)] rounded-3xl overflow-hidden shadow-lg transition-colors hover:border-[var(--brand)]/40 flex flex-col">
-      {/* Header Info */}
-      <div className="p-4 flex items-center justify-between border-b border-[var(--border)]">
-        <div className="flex items-center gap-3 min-w-0">
-          <Avatar user={author} size={42} />
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-[var(--text)] truncate">{author?.name}</p>
-            <p className="text-xs text-[var(--muted)] truncate">@{author?.username}</p>
-          </div>
-        </div>
-
-        <button
-          onClick={onOpenChallenge}
-          className="px-3 py-1.5 rounded-xl bg-[var(--card-2)] hover:bg-[var(--brand)] hover:text-black text-[var(--text)] text-xs font-bold transition-colors flex items-center gap-1.5 flex-shrink-0"
-        >
-          <span>View Challenge</span>
-          <Icon name="arrowRight" size={13} />
-        </button>
-      </div>
-
-      {/* Video Player */}
-      <div className="bg-black relative aspect-[4/5] sm:aspect-[16/11] max-h-[560px] flex items-center justify-center overflow-hidden">
-        <R2Video
-          mediaKey={checkin.mediaUrl}
-          controls
-          className="w-full h-full object-contain"
-        />
-      </div>
-
-      {/* Footer Info */}
-      <div className="p-4 sm:p-5 space-y-3">
-        <div className="flex items-center justify-between">
-          <span className="px-3 py-1 rounded-full bg-[var(--brand-soft)] text-[var(--brand)] text-xs font-bold">
-            Day {checkin.dayNumber} of {challenge.durationDays}
-          </span>
-          <span className="text-xs text-[var(--muted)]">
-            {fullDate(checkin.date || checkin.createdAt)}
-          </span>
-        </div>
-
-        <div>
-          <button
-            onClick={onOpenChallenge}
-            className="text-left font-bold text-sm text-[var(--text)] hover:text-[var(--brand)] transition-colors line-clamp-1"
-          >
-            {challenge.title}
-          </button>
-          {checkin.note && (
-            <p className="text-xs sm:text-sm text-[var(--muted)] mt-1.5 whitespace-pre-wrap leading-relaxed line-clamp-4">
-              {checkin.note}
-            </p>
-          )}
-        </div>
-      </div>
-    </article>
-  );
-}
-
-/* -------------------------- Photo Discovery Card -------------------------- */
-
-function PhotoFeedCard({
-  item,
-  onClick,
-  onOpenChallenge,
-}: {
-  item: EnrichedProofItem;
-  onClick: () => void;
-  onOpenChallenge: () => void;
-}) {
-  const { checkin, challenge, author } = item;
-
-  return (
-    <article className="bg-[var(--card)] border border-[var(--border)] rounded-2xl overflow-hidden hover:border-[var(--brand)]/40 transition-colors flex flex-col group">
-      {/* Photo with hover click */}
-      <div
-        onClick={onClick}
-        className="relative aspect-square w-full bg-black cursor-pointer overflow-hidden"
-      >
-        <R2Image
-          mediaKey={checkin.mediaUrl}
-          alt={`Proof for ${challenge.title}`}
-          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-        />
-        <span className="absolute top-2.5 right-2.5 px-2 py-0.5 rounded-full bg-black/75 backdrop-blur text-white text-[11px] font-bold">
-          Day {checkin.dayNumber}
-        </span>
-      </div>
-
-      <div className="p-3.5 flex flex-col gap-2 flex-1 justify-between">
-        <div>
-          <button
-            onClick={onOpenChallenge}
-            className="font-bold text-xs text-[var(--text)] hover:text-[var(--brand)] transition-colors line-clamp-1 text-left"
-          >
-            {challenge.title}
-          </button>
-          {checkin.note && (
-            <p className="text-[12px] text-[var(--muted)] mt-1 line-clamp-2 leading-relaxed">
-              {checkin.note}
-            </p>
-          )}
-        </div>
-
-        <div className="flex items-center justify-between pt-2 border-t border-[var(--border)] text-[11px]">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <Avatar user={author} size={22} />
-            <span className="text-[var(--muted)] truncate">@{author?.username}</span>
-          </div>
-          <span className="text-[var(--muted)]">{fullDate(checkin.date || checkin.createdAt)}</span>
-        </div>
-      </div>
-    </article>
   );
 }

@@ -1,5 +1,5 @@
-import type { AppNotification, NotificationKind, Thread, UserProfile } from '@/lib/types';
-import type { Category, Challenge, ChallengeComment, Checkin, Participation } from '@/lib/duel/types';
+import type { AppNotification, MessageRequest, NotificationKind, Thread, UserProfile } from '@/lib/types';
+import type { Category, Challenge, ChallengeComment, ChallengePost, Participation, PostComment } from '@/lib/duel/types';
 
 /**
  * Row mappers + typed helpers for the DUEL production schema
@@ -74,7 +74,7 @@ export function mapProfile(row: any, ids: IdMapper): UserProfile {
     website: row.website ?? '',
     joined: row.created_at ?? new Date().toISOString(),
     verified: Boolean(row.verified),
-    persona: Boolean(row.is_persona),
+    lastSeenAt: row.last_seen_at ?? null,
   };
 }
 
@@ -127,7 +127,7 @@ export function mapParticipation(row: any, ids: IdMapper): Participation {
   };
 }
 
-export function mapCheckin(row: any, ids: IdMapper): Checkin {
+export function mapPost(row: any, ids: IdMapper): ChallengePost {
   return {
     id: row.id,
     challengeId: row.challenge_id,
@@ -137,6 +137,30 @@ export function mapCheckin(row: any, ids: IdMapper): Checkin {
     note: row.note ?? '',
     mediaUrl: row.media_url ?? null,
     mediaType: row.media_type ?? null,
+    likeCount: row.like_count ?? 0,
+    commentCount: row.comment_count ?? 0,
+    saveCount: row.save_count ?? 0,
+    shareCount: row.share_count ?? 0,
+    createdAt: row.created_at,
+  };
+}
+
+export function mapPostComment(row: any, ids: IdMapper): PostComment {
+  return {
+    id: row.id,
+    postId: row.post_id,
+    userId: ids.app(row.user_id),
+    text: row.body ?? '',
+    createdAt: row.created_at,
+  };
+}
+
+export function mapMessageRequest(row: any, ids: IdMapper): MessageRequest {
+  return {
+    id: row.id,
+    fromId: ids.app(row.from_user),
+    toId: ids.app(row.to_user),
+    status: row.status ?? 'pending',
     createdAt: row.created_at,
   };
 }
@@ -168,8 +192,10 @@ export function mapMessage(row: any, myProfileId: string): Thread['messages'][nu
   return {
     id: row.id,
     fromMe: row.sender_id === myProfileId,
-    text: row.content,
+    text: row.content ?? '',
     at: row.created_at,
+    media: row.media_url ?? null,
+    mediaType: row.media_type ?? null,
   };
 }
 
@@ -194,7 +220,14 @@ function withNumericSuffix(base: string, n: number): string {
 export async function ensureProfile(sb: SupabaseClientLike, user: { id: string; email?: string; user_metadata?: any }) {
   const { data, error } = await sb.from('profiles').select('*').eq('user_id', user.id).maybeSingle();
   if (error) throw error;
-  if (data) return data;
+  if (data) {
+    // Refresh presence so other members see an accurate online status.
+    // Fire-and-forget: a failure here must never block sign-in.
+    void Promise.resolve(
+      sb.from('profiles').update({ last_seen_at: new Date().toISOString() }).eq('id', data.id)
+    ).catch(() => {});
+    return data;
+  }
 
   const base = normalizeUsername(user.user_metadata?.username || user.email?.split('@')[0] || 'duelist');
   let candidate = base;

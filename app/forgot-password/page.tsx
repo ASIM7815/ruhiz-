@@ -2,15 +2,13 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { StoreProvider, useStore } from '@/lib/duel/store';
+import { StoreProvider } from '@/lib/duel/store';
 import AuthLayout, { AuthError, AuthInput, AuthSuccess } from '@/components/auth/AuthLayout';
 import { Spinner } from '@/components/ui/Primitives';
 import { isSupabaseConfigured } from '@/lib/config';
 
 function ForgotInner() {
-  const store = useStore();
   const [email, setEmail] = useState('');
-  const [newPassword, setNewPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -25,18 +23,15 @@ function ForgotInner() {
     }
     setLoading(true);
     try {
-      if (isSupabaseConfigured) {
-        const { createClient } = await import('@/lib/supabase/client');
-        const { error: err } = await createClient().auth.resetPasswordForEmail(email.trim(), {
-          redirectTo: `${window.location.origin}/reset-password`,
-        });
-        if (err) throw new Error(err.message);
-        setSuccess('Recovery email sent. Follow the link to set a new password.');
-      } else {
-        if (newPassword.length < 8) throw new Error('New password must be at least 8 characters.');
-        await store.demoResetPassword(email, newPassword);
-        setSuccess('Password updated for this browser account. You can sign in now.');
+      if (!isSupabaseConfigured) {
+        throw new Error('Password recovery needs the configured Supabase backend.');
       }
+      const { createClient } = await import('@/lib/supabase/client');
+      const { error: err } = await createClient().auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
+      if (err) throw new Error(err.message);
+      setSuccess('Recovery email sent. Follow the link to set a new password.');
     } catch (err: any) {
       setError(err?.message ?? 'Could not start recovery.');
     } finally {
@@ -50,22 +45,12 @@ function ForgotInner() {
       <AuthSuccess message={success} />
       <form onSubmit={submit} noValidate>
         <AuthInput label="Email" type="email" value={email} onChange={setEmail} placeholder="you@example.com" autoComplete="email" />
-        {!isSupabaseConfigured && (
-          <AuthInput
-            label="New password"
-            type="password"
-            value={newPassword}
-            onChange={setNewPassword}
-            placeholder="8+ characters"
-            autoComplete="new-password"
-          />
-        )}
-        <button
+          <button
           type="submit"
           disabled={loading}
           className="w-full py-3 rounded-xl bg-[#16e08a] text-black font-bold text-sm hover:bg-[#0dbb72] transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
         >
-          {loading && <Spinner size={16} />} {isSupabaseConfigured ? 'Send recovery email' : 'Set new password'}
+          {loading && <Spinner size={16} />} Send recovery email
         </button>
       </form>
       <p className="text-center text-sm text-[var(--muted)] mt-7">

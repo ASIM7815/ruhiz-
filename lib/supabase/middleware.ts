@@ -2,8 +2,8 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
 export async function updateSession(request: NextRequest) {
-  // When Supabase isn't configured (no env vars), skip auth entirely so the
-  // app can run in demo mode with sample data.
+  // When Supabase isn't configured (no env vars), skip auth so the app can
+  // still boot; the store surfaces a clear "backend not configured" state.
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
     return NextResponse.next({ request })
   }

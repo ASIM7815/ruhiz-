@@ -7,7 +7,3 @@ export const isR2Configured = Boolean(
     ? process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID
     : true // client cannot know; upload route decides and we fall back gracefully
 );
-
-export function demoMode() {
-  return !isSupabaseConfigured;
-}

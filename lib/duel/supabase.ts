@@ -1,13 +1,18 @@
 'use client';
 
 /**
- * DUEL Supabase adapter — production implementation of the DUEL data
- * contract against Postgres (RLS-protected) with Realtime notifications.
+ * DUEL Supabase adapter — the single production implementation of the DUEL
+ * data contract against Postgres (RLS-protected) with Realtime.
+ *
+ * Hierarchy:  profiles → challenges → challenge_participants → challenge
+ * posts (challenge_checkins) → media + description + per-post engagement.
  *
  * Counters, streaks and completion are maintained by database triggers and
- * the duel_checkin() RPC so concurrent users can never corrupt them; this
- * adapter mirrors server state into the shared DuelDB snapshot and applies
- * optimistic patches for instant UI feedback.
+ * RPCs (duel_checkin, duel_record_view, recomputation on post delete) so
+ * concurrent users can never corrupt them; this adapter mirrors server state
+ * into the shared DuelDB snapshot and applies optimistic patches for instant
+ * UI feedback. There is no demo/fallback dataset — an empty database yields
+ * empty arrays and the UI renders honest empty states.
  */
 
 import type { ActivityAction, AppNotification, Settings, Thread, UserProfile } from '@/lib/types';
@@ -20,21 +25,27 @@ import {
   loadConversations,
   mapCategory,
   mapChallenge,
-  mapCheckin,
   mapComment,
+  mapMessage,
+  mapMessageRequest,
   mapNotification,
   mapParticipation,
+  mapPost,
+  mapPostComment,
   mapProfile,
   ME_APP_ID,
 } from '@/lib/backend/api';
 import { defaultSettings, emptyDB, type DuelDB } from './db';
 import type { BootstrapResult, DuelAdapter } from './adapter';
-import type { Challenge, ChallengeComment, Checkin, CreateChallengeInput } from './types';
+import type { Challenge, ChallengeComment, ChallengePost, CreateChallengeInput, PostComment } from './types';
 import { durationBucket } from './types';
 
 function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v)) as T;
 }
+
+const POST_PAGE_LIMIT = 800;
+const IN_CHUNK_SIZE = 150;
 
 export class SupabaseAdapter implements DuelAdapter {
   readonly kind = 'supabase' as const;
@@ -52,7 +63,7 @@ export class SupabaseAdapter implements DuelAdapter {
 
   subscribe(cb: (db: DuelDB) => void): () => void {
     this.listeners.add(cb);
-    return () => this.listeners.delete(cb);
+    return () => { this.listeners.delete(cb); };
   }
 
   private emit() {
@@ -63,52 +74,41 @@ export class SupabaseAdapter implements DuelAdapter {
   /* ------------------------------ bootstrap ----------------------------- */
 
   async bootstrap(): Promise<BootstrapResult> {
-    console.log('[SUPABASE BOOTSTRAP] Starting...');
     this.sb = safeClient();
     if (!this.sb) {
-      console.log('[SUPABASE BOOTSTRAP] No client available, returning unauthed');
-      return { db: clone(this.db), authed: false };
+      return {
+        db: clone(this.db),
+        authed: false,
+        error: 'Supabase is not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY, then run the supabase/migrations SQL in your project.',
+      };
     }
     const { data } = await this.sb.auth.getSession();
-    console.log('[SUPABASE BOOTSTRAP] Session:', data?.session ? 'EXISTS' : 'NULL', 'User:', data?.session?.user?.email);
     const user = data?.session?.user;
     if (!user) {
-      console.log('[SUPABASE BOOTSTRAP] No user in session, returning unauthed');
       return { db: clone(this.db), authed: false };
     }
 
-    console.log('[SUPABASE BOOTSTRAP] User found, ensuring profile...');
-    
-    // Try to ensure profile, but don't fail auth if this fails
     let profile;
     try {
       profile = await ensureProfile(this.sb, user);
-      console.log('[SUPABASE BOOTSTRAP] Profile ensured:', profile.username);
     } catch (err) {
-      console.error('[SUPABASE BOOTSTRAP] Failed to ensure profile:', err);
-      // User is authenticated even if profile load fails
-      return { 
-        db: clone(this.db), 
-        authed: true, 
-        error: 'Could not load your profile. Some features may not work.' 
-      };
+      return { db: clone(this.db), authed: true, error: 'Could not load your profile. Some features may not work.' };
     }
-    
+
     this.profileId = profile.id;
     this.ids = new IdMapper(profile.id);
     this.db.meId = ME_APP_ID;
 
-    // Load data - if these fail, user is STILL authenticated, just with empty data
-    let profileRows, catRows, chRows, partRows, ckRows, cmRows, likeRows, saveRows, actRows, searchRows, notifRows;
-    
+    let profileRows, catRows, chRows, partRows, postRows, cmRows, likeRows, saveRows, actRows, searchRows, notifRows;
     try {
-      [profileRows, catRows, chRows, partRows, ckRows, cmRows, likeRows, saveRows, actRows, searchRows, notifRows] =
+      [profileRows, catRows, chRows, partRows, postRows, cmRows, likeRows, saveRows, actRows, searchRows, notifRows] =
         await Promise.all([
           this.sb.from('profiles').select('*'),
           this.sb.from('duel_categories').select('*').order('sort'),
           this.sb.from('challenges').select('*').order('created_at', { ascending: false }).limit(400),
           this.sb.from('challenge_participants').select('*').eq('user_id', profile.id),
-          this.sb.from('challenge_checkins').select('*').eq('user_id', profile.id).order('checkin_date', { ascending: false }).limit(800),
+          // ALL public challenge posts — the activity inside every challenge
+          this.sb.from('challenge_checkins').select('*').order('created_at', { ascending: false }).limit(POST_PAGE_LIMIT),
           this.sb.from('challenge_comments').select('*').order('created_at', { ascending: true }).limit(1500),
           this.sb.from('challenge_likes').select('challenge_id').eq('user_id', profile.id),
           this.sb.from('challenge_saves').select('challenge_id').eq('user_id', profile.id),
@@ -116,30 +116,12 @@ export class SupabaseAdapter implements DuelAdapter {
           this.sb.from('searches').select('*').eq('user_id', profile.id).order('created_at', { ascending: false }).limit(200),
           this.sb.from('notifications').select('*').eq('user_id', profile.id).order('created_at', { ascending: false }).limit(80),
         ]);
-
-      // Log any errors but don't throw
-      for (const [label, res] of [
-        ['profiles', profileRows], ['categories', catRows], ['challenges', chRows],
-      ] as const) {
-        if ((res as any).error) {
-          console.error('[SUPABASE BOOTSTRAP] Error loading ' + label + ':', (res as any).error);
-        }
-      }
-      if (partRows?.error) {
-        console.error('[SUPABASE BOOTSTRAP] Error loading participants:', partRows.error);
-      }
     } catch (err) {
-      console.error('[SUPABASE BOOTSTRAP] Error loading data:', err);
-      // Return authenticated but with minimal data
-      this.db = {
-        ...emptyDB(),
-        meId: ME_APP_ID,
-        profiles: { [ME_APP_ID]: mapProfile(profile, this.ids) },
-      };
-      return { 
-        db: clone(this.db), 
-        authed: true, 
-        error: 'Could not load DUEL data. Database migration may be pending.' 
+      console.error('[SUPABASE BOOTSTRAP] Error loading core data:', err);
+      return {
+        db: { ...emptyDB(), meId: ME_APP_ID, profiles: { [ME_APP_ID]: mapProfile(profile, this.ids) } },
+        authed: true,
+        error: 'Could not load DUEL data. The database migration may be pending — run supabase/migrations in the SQL Editor.',
       };
     }
 
@@ -151,14 +133,67 @@ export class SupabaseAdapter implements DuelAdapter {
     }
     profiles[ME_APP_ID] = mapProfile(profile, this.ids);
 
-    const challengeIds = (chRows?.data ?? []).map((r: any) => r.id as string);
-    let commentRows = { data: [] as any[], error: null };
+    const challenges: Challenge[] = (chRows?.data ?? []).map((r: any) => ({ ...mapChallenge(r), creatorId: this.ids.app(r.creator_id) }));
+    const posts: ChallengePost[] = (postRows?.data ?? []).map((r: any) => mapPost(r, this.ids));
+
+    // Challenge comments scoped to the challenges we loaded
+    let challengeCommentRows = { data: [] as any[] };
+    const challengeIds = challenges.map((c) => c.id);
     if (challengeIds.length) {
       try {
-        commentRows = await this.sb.from('challenge_comments').select('*').in('challenge_id', challengeIds).order('created_at', { ascending: true });
+        challengeCommentRows = await this.sb
+          .from('challenge_comments')
+          .select('*')
+          .in('challenge_id', challengeIds)
+          .order('created_at', { ascending: true });
       } catch (err) {
-        console.error('[SUPABASE BOOTSTRAP] Error loading comments:', err);
+        console.error('[SUPABASE BOOTSTRAP] Error loading challenge comments:', err);
       }
+    }
+
+    // Post-level social: comments for loaded posts + MY likes/saves (toggle state)
+    let postCommentRows: any[] = [];
+    let myPostLikes: { post_id: string; created_at: string }[] = [];
+    let myPostSaves: { post_id: string; created_at: string }[] = [];
+    let messageRequestRows: any[] = [];
+    try {
+      const postIds = posts.map((p) => p.id);
+      postCommentRows = [];
+      for (let i = 0; i < postIds.length; i += IN_CHUNK_SIZE) {
+        const chunk = postIds.slice(i, i + IN_CHUNK_SIZE);
+        const res = await this.sb.from('post_comments').select('*').in('post_id', chunk).order('created_at', { ascending: true });
+        if (res.error) throw res.error;
+        postCommentRows = postCommentRows.concat(res.data ?? []);
+      }
+      const [plRes, psRes, mrRes] = await Promise.all([
+        this.sb.from('post_likes').select('post_id, created_at').eq('user_id', profile.id),
+        this.sb.from('post_saves').select('post_id, created_at').eq('user_id', profile.id),
+        this.sb
+          .from('message_requests')
+          .select('*')
+          .or(`to_user.eq.${profile.id},from_user.eq.${profile.id}`)
+          .order('created_at', { ascending: false }),
+      ]);
+      if (plRes.error) throw plRes.error;
+      if (psRes.error) throw psRes.error;
+      if (mrRes.error) throw mrRes.error;
+      myPostLikes = plRes.data ?? [];
+      myPostSaves = psRes.data ?? [];
+      messageRequestRows = mrRes.data ?? [];
+    } catch (err: any) {
+      // Phase-2 tables missing (migration 20260921 not applied yet) — core
+      // data still works; per-post engagement will surface the error on use.
+      console.error('[SUPABASE BOOTSTRAP] Post social unavailable:', err);
+    }
+
+    // Server-ranked trending (optional enhancement)
+    let trending: string[] = [];
+    try {
+      const res = await this.sb.rpc('duel_trending', { p_limit: 12 });
+      if (res.error) throw res.error;
+      trending = (res.data ?? []).map((r: any) => r.id as string);
+    } catch (err: any) {
+      console.warn('[SUPABASE BOOTSTRAP] duel_trending unavailable, using client-side trends:', err?.message);
     }
 
     this.db = {
@@ -166,10 +201,13 @@ export class SupabaseAdapter implements DuelAdapter {
       meId: ME_APP_ID,
       profiles,
       categories: (catRows?.data ?? []).map(mapCategory),
-      challenges: (chRows?.data ?? []).map(mapChallenge).map((c: Challenge) => ({ ...c, creatorId: this.ids.app(c.creatorId) })),
+      challenges,
       participants: (partRows?.data ?? []).map((r: any) => mapParticipation(r, this.ids)),
-      checkins: (ckRows?.data ?? []).map((r: any) => mapCheckin(r, this.ids)),
-      comments: (commentRows?.data ?? []).map((r: any) => mapComment(r, this.ids)),
+      posts,
+      postComments: postCommentRows.map((r: any) => mapPostComment(r, this.ids)),
+      myPostLikes: myPostLikes.map((r: any) => ({ postId: r.post_id, userId: ME_APP_ID, createdAt: r.created_at })),
+      myPostSaves: myPostSaves.map((r: any) => ({ postId: r.post_id, userId: ME_APP_ID, createdAt: r.created_at })),
+      comments: challengeCommentRows.data.map((r: any) => mapComment(r, this.ids)),
       likes: (likeRows?.data ?? []).map((r: any) => ({ challengeId: r.challenge_id, userId: ME_APP_ID, createdAt: r.created_at })),
       saves: (saveRows?.data ?? []).map((r: any) => ({ challengeId: r.challenge_id, userId: ME_APP_ID, createdAt: r.created_at })),
       shares: [],
@@ -180,6 +218,8 @@ export class SupabaseAdapter implements DuelAdapter {
       searches: (searchRows?.data ?? []).map((r: any) => ({ id: r.id, userId: ME_APP_ID, query: r.query, createdAt: r.created_at })),
       notifications: (notifRows?.data ?? []).map((r: any) => mapNotification(r, this.ids)),
       threads: [],
+      messageRequests: messageRequestRows.map((r: any) => mapMessageRequest(r, this.ids)),
+      trending,
       settings: { ...defaultSettings(), ...(profile.settings ?? {}) },
     };
 
@@ -193,7 +233,6 @@ export class SupabaseAdapter implements DuelAdapter {
 
     this.emit();
     this.subscribeRealtime();
-    console.log('[SUPABASE BOOTSTRAP] Complete! Returning authed = true');
     return { db: clone(this.db), authed: true };
   }
 
@@ -201,7 +240,8 @@ export class SupabaseAdapter implements DuelAdapter {
     this.channels.forEach((c) => this.sb?.removeChannel?.(c));
     this.channels = [];
     if (!this.profileId) return;
-    const ch = this.sb
+
+    const notifCh = this.sb
       .channel('duel:notifications')
       .on(
         'postgres_changes',
@@ -214,7 +254,43 @@ export class SupabaseAdapter implements DuelAdapter {
         }
       )
       .subscribe();
-    this.channels.push(ch);
+    this.channels.push(notifCh);
+
+    // Live challenge activity: new posts appear in feeds/challenge pages.
+    // RLS still applies — only public posts are ever delivered.
+    const postCh = this.sb
+      .channel('duel:posts')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'challenge_checkins' },
+        (payload: any) => {
+          const row = payload.new;
+          if (!row?.id) return;
+          if (this.db.posts.some((p) => p.id === row.id)) return;
+          this.db.posts.unshift(mapPost(row, this.ids));
+          this.emit();
+        }
+      )
+      .subscribe();
+    this.channels.push(postCh);
+
+    // Live chat: RLS restricts rows to conversations I participate in.
+    const msgCh = this.sb
+      .channel('duel:messages')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload: any) => {
+        const row = payload.new;
+        if (!row?.conversation_id) return;
+        const thread = this.db.threads.find((t) => t.id === row.conversation_id);
+        if (!thread) return;
+        const msg = mapMessage(row, this.profileId!);
+        if (thread.messages.some((m) => m.id === msg.id)) return;
+        thread.messages.push(msg);
+        thread.lastMessageAt = msg.at;
+        if (!msg.fromMe) thread.unread += 1;
+        this.emit();
+      })
+      .subscribe();
+    this.channels.push(msgCh);
   }
 
   /* ------------------------------- behaviour ---------------------------- */
@@ -255,7 +331,7 @@ export class SupabaseAdapter implements DuelAdapter {
       .select('*')
       .single();
     if (error) throw error;
-    const ch = { ...mapChallenge(data), creatorId: ME_APP_ID };
+    const ch: Challenge = { ...mapChallenge(data), creatorId: ME_APP_ID };
     this.db.challenges.unshift(ch);
     this.db.participants.push({
       challengeId: ch.id, userId: ME_APP_ID, status: 'active', joinedAt: ch.createdAt,
@@ -286,6 +362,7 @@ export class SupabaseAdapter implements DuelAdapter {
     if (error) throw error;
     this.db.challenges = this.db.challenges.filter((c) => c.id !== id);
     this.db.participants = this.db.participants.filter((p) => p.challengeId !== id);
+    this.db.posts = this.db.posts.filter((p) => p.challengeId !== id);
     this.emit();
   }
 
@@ -318,17 +395,18 @@ export class SupabaseAdapter implements DuelAdapter {
     this.emit();
   }
 
+  /* ------------------------------- posts -------------------------------- */
+
+  /** Submit (or update) a day's progress post inside a challenge. */
   async checkin(
     challengeId: string,
     note: string,
     mediaUrl?: string | null,
     mediaType?: 'image' | 'video' | null,
     dayNumber?: number
-  ): Promise<Checkin> {
-    // Attempt modern RPC with media parameters
+  ): Promise<ChallengePost> {
     let data: any = null;
     let error: any = null;
-
     try {
       const res = await this.sb.rpc('duel_checkin', {
         p_challenge_id: challengeId,
@@ -342,29 +420,7 @@ export class SupabaseAdapter implements DuelAdapter {
     } catch (rpcErr) {
       error = rpcErr;
     }
-
-    // Fallback if database RPC has older 2-arg signature
-    if (error && (error.code === 'PGRST202' || error.message?.includes('parameters'))) {
-      const legacyRes = await this.sb.rpc('duel_checkin', {
-        p_challenge_id: challengeId,
-        p_note: note,
-      });
-      if (legacyRes.error) throw legacyRes.error;
-      data = legacyRes.data;
-      error = null;
-
-      // Update the newly created checkin row with mediaUrl/mediaType if present
-      if (data?.checkin?.id && (mediaUrl || mediaType)) {
-        await this.sb
-          .from('challenge_checkins')
-          .update({ media_url: mediaUrl ?? null, media_type: mediaType ?? null })
-          .eq('id', data.checkin.id);
-        data.checkin.media_url = mediaUrl ?? null;
-        data.checkin.media_type = mediaType ?? null;
-      }
-    } else if (error) {
-      throw error;
-    }
+    if (error) throw error;
 
     const row = data?.checkin;
     const part = data?.participation;
@@ -372,11 +428,11 @@ export class SupabaseAdapter implements DuelAdapter {
       this.db.participants = this.db.participants.filter((p) => p.challengeId !== challengeId);
       this.db.participants.push(mapParticipation({ ...part, user_id: this.profileId }, this.ids));
     }
-    const ck = row ? mapCheckin({ ...row, user_id: this.profileId }, this.ids) : null;
+    const ck: ChallengePost | null = row ? mapPost({ ...row, user_id: this.profileId }, this.ids) : null;
     if (ck) {
-      // Update checkins in local db snapshot
-      this.db.checkins = this.db.checkins.filter((c) => c.id !== ck.id);
-      this.db.checkins.push(ck);
+      this.db.posts = this.db.posts.filter((p) => p.id !== ck.id);
+      this.db.posts.push(ck);
+      this.db.posts.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     }
     const ch = this.db.challenges.find((c) => c.id === challengeId);
     if (ch && ck) this.track('checkin', ch);
@@ -384,6 +440,36 @@ export class SupabaseAdapter implements DuelAdapter {
     if (!ck) throw new Error('Check-in was not recorded.');
     return ck;
   }
+
+  /** Delete one of my own posts; the DB recomputes progress/streaks. */
+  async deletePost(postId: string): Promise<void> {
+    const { error } = await this.sb.from('challenge_checkins').delete().eq('id', postId).eq('user_id', this.profileId);
+    if (error) throw error;
+    const post = this.db.posts.find((p) => p.id === postId);
+    this.db.posts = this.db.posts.filter((p) => p.id !== postId);
+    this.db.postComments = this.db.postComments.filter((c) => c.postId !== postId);
+    this.db.myPostLikes = this.db.myPostLikes.filter((l) => l.postId !== postId);
+    this.db.myPostSaves = this.db.myPostSaves.filter((s) => s.postId !== postId);
+
+    // Fetch the recomputed participation so progress UI stays truthful.
+    if (post) {
+      const { data: partRows, error: pErr } = await this.sb
+        .from('challenge_participants')
+        .select('*')
+        .eq('challenge_id', post.challengeId)
+        .eq('user_id', this.profileId);
+      if (!pErr && partRows?.[0]) {
+        const fresh = mapParticipation({ ...partRows[0], user_id: this.profileId }, this.ids);
+        this.db.participants = [
+          ...this.db.participants.filter((p) => p.challengeId !== post.challengeId),
+          fresh,
+        ];
+      }
+    }
+    this.emit();
+  }
+
+  /* -------------------------- challenge engagement ----------------------- */
 
   async toggleLike(id: string): Promise<boolean> {
     const existing = this.db.likes.find((l) => l.challengeId === id);
@@ -466,6 +552,15 @@ export class SupabaseAdapter implements DuelAdapter {
     const ch = this.db.challenges.find((c) => c.id === id);
     if (!ch) return;
     ch.viewCount += 1;
+    void Promise.resolve(this.sb.rpc('duel_record_view', { p_challenge_id: id }))
+      .then((res: any) => {
+        if (!res?.error && typeof res.data === 'number') {
+          const target = this.db.challenges.find((c) => c.id === id);
+          if (target) target.viewCount = res.data;
+          this.emit();
+        }
+      })
+      .catch(() => {});
     this.track('view', ch);
     this.emit();
   }
@@ -485,30 +580,144 @@ export class SupabaseAdapter implements DuelAdapter {
     this.emit();
   }
 
+  /* --------------------------- post engagement --------------------------- */
+
+  private findPost(postId: string): ChallengePost {
+    const post = this.db.posts.find((p) => p.id === postId);
+    if (!post) throw new Error('This post no longer exists.');
+    return post;
+  }
+
+  async togglePostLike(postId: string): Promise<boolean> {
+    const post = this.findPost(postId);
+    const existing = this.db.myPostLikes.find((l) => l.postId === postId);
+    if (existing) {
+      const { error } = await this.sb.from('post_likes').delete().eq('post_id', postId).eq('user_id', this.profileId);
+      if (error) throw error;
+      this.db.myPostLikes = this.db.myPostLikes.filter((l) => l !== existing);
+      post.likeCount = Math.max(0, post.likeCount - 1);
+      this.emit();
+      return false;
+    }
+    const { error } = await this.sb.from('post_likes').insert({ post_id: postId, user_id: this.profileId });
+    if (error) throw error;
+    this.db.myPostLikes.push({ postId, userId: ME_APP_ID, createdAt: new Date().toISOString() });
+    post.likeCount += 1;
+    this.emit();
+    return true;
+  }
+
+  async togglePostSave(postId: string): Promise<boolean> {
+    const post = this.findPost(postId);
+    const existing = this.db.myPostSaves.find((l) => l.postId === postId);
+    if (existing) {
+      const { error } = await this.sb.from('post_saves').delete().eq('post_id', postId).eq('user_id', this.profileId);
+      if (error) throw error;
+      this.db.myPostSaves = this.db.myPostSaves.filter((l) => l !== existing);
+      post.saveCount = Math.max(0, post.saveCount - 1);
+      this.emit();
+      return false;
+    }
+    const { error } = await this.sb.from('post_saves').insert({ post_id: postId, user_id: this.profileId });
+    if (error) throw error;
+    this.db.myPostSaves.push({ postId, userId: ME_APP_ID, createdAt: new Date().toISOString() });
+    post.saveCount += 1;
+    this.emit();
+    return true;
+  }
+
+  async sharePost(postId: string): Promise<void> {
+    const post = this.findPost(postId);
+    const { error } = await this.sb.from('post_shares').insert({ post_id: postId, user_id: this.profileId });
+    // duplicate (23505) = already shared — treat as a successful re-share
+    if (error && !String(error.code ?? '').startsWith('2350')) throw error;
+    if (!error) post.shareCount += 1;
+    this.emit();
+  }
+
+  async addPostComment(postId: string, text: string): Promise<PostComment> {
+    const post = this.findPost(postId);
+    const { data, error } = await this.sb
+      .from('post_comments')
+      .insert({ post_id: postId, user_id: this.profileId, body: text })
+      .select('*')
+      .single();
+    if (error) throw error;
+    const cm = mapPostComment(data, this.ids);
+    this.db.postComments.push(cm);
+    post.commentCount += 1;
+    this.emit();
+    return cm;
+  }
+
+  async deletePostComment(commentId: string): Promise<void> {
+    const { error } = await this.sb.from('post_comments').delete().eq('id', commentId).eq('user_id', this.profileId);
+    if (error) throw error;
+    const cm = this.db.postComments.find((c) => c.id === commentId);
+    this.db.postComments = this.db.postComments.filter((c) => c.id !== commentId);
+    if (cm) {
+      const post = this.db.posts.find((p) => p.id === cm.postId);
+      if (post) post.commentCount = Math.max(0, post.commentCount - 1);
+    }
+    this.emit();
+  }
+
   /* ------------------------------- messages ----------------------------- */
 
+  /**
+   * Open (or return) a conversation. Resolves to a conversation id, or the
+   * literal string 'request:pending' when the recipient's privacy settings
+   * (blocked / restricted) turn the attempt into a message request.
+   */
   async openThreadWith(userId: string): Promise<string> {
     const existing = this.db.threads.find((t) => t.userId === userId);
     if (existing) return existing.id;
     const otherProfileId = this.ids.profile(userId);
     const { data, error } = await this.sb.rpc('duel_open_conversation', { p_other_user: otherProfileId });
     if (error) throw error;
-    const convoId = data as string;
+    const result = String(data ?? '');
+    if (result.startsWith('request:')) {
+      await this.refreshMessageRequests();
+      this.emit();
+      return result;
+    }
     const bundles = await loadConversations(this.sb, this.profileId!);
-    const bundle = bundles.find((b) => b.thread.id === convoId);
-    const thread: Thread = bundle?.thread ?? { id: convoId, userId, messages: [], unread: 0, online: false, otherLastReadAt: null, lastMessageAt: null };
-    this.db.threads = [{ ...thread, userId }, ...this.db.threads.filter((t) => t.id !== convoId)];
+    this.db.threads = bundles.map((b) => ({ ...b.thread, userId: this.ids.app(b.otherProfileId) })) as Thread[];
     this.emit();
-    return convoId;
+    return result;
   }
 
-  async sendMessage(threadId: string, text: string): Promise<void> {
+  private async refreshMessageRequests() {
+    if (!this.profileId) return;
+    const { data, error } = await this.sb
+      .from('message_requests')
+      .select('*')
+      .or(`to_user.eq.${this.profileId},from_user.eq.${this.profileId}`)
+      .order('created_at', { ascending: false });
+    if (error) return;
+    this.db.messageRequests = (data ?? []).map((r: any) => mapMessageRequest(r, this.ids));
+  }
+
+  async sendMessage(threadId: string, text: string, mediaUrl?: string | null, mediaType?: 'image' | 'video' | null): Promise<void> {
     const thread = this.db.threads.find((t) => t.id === threadId);
     if (!thread) throw new Error('Conversation not found.');
-    const { error } = await this.sb.from('messages').insert({ conversation_id: threadId, sender_id: this.profileId, content: text });
+    const content = text.trim().slice(0, 2000);
+    if (!content && !mediaUrl) throw new Error('Message cannot be empty.');
+    const { data, error } = await this.sb
+      .from('messages')
+      .insert({
+        conversation_id: threadId,
+        sender_id: this.profileId,
+        content,
+        media_url: mediaUrl ?? null,
+        media_type: mediaType ?? null,
+      })
+      .select('*')
+      .single();
     if (error) throw error;
-    thread.messages.push({ id: uid('m-'), fromMe: true, text, at: new Date().toISOString() });
-    thread.lastMessageAt = new Date().toISOString();
+    const msg = mapMessage(data, this.profileId!);
+    thread.messages.push(msg);
+    thread.lastMessageAt = msg.at;
     this.emit();
   }
 
@@ -521,6 +730,24 @@ export class SupabaseAdapter implements DuelAdapter {
       this.sb.from('conversation_participants').update({ last_read_at: new Date().toISOString() })
         .eq('conversation_id', threadId).eq('user_id', this.profileId)
     ).catch(() => {});
+  }
+
+  async acceptMessageRequest(requestId: string): Promise<string> {
+    const { data, error } = await this.sb.rpc('duel_accept_message_request', { p_request_id: requestId });
+    if (error) throw error;
+    const convoId = String(data ?? '');
+    const bundles = await loadConversations(this.sb, this.profileId!);
+    this.db.threads = bundles.map((b) => ({ ...b.thread, userId: this.ids.app(b.otherProfileId) })) as Thread[];
+    await this.refreshMessageRequests();
+    this.emit();
+    return convoId;
+  }
+
+  async declineMessageRequest(requestId: string): Promise<void> {
+    const { error } = await this.sb.rpc('duel_decline_message_request', { p_request_id: requestId });
+    if (error) throw error;
+    await this.refreshMessageRequests();
+    this.emit();
   }
 
   /* ----------------------------- notifications -------------------------- */
@@ -573,10 +800,6 @@ export class SupabaseAdapter implements DuelAdapter {
     this.db.settings.blocked = this.db.settings.blocked.filter((b) => b !== id);
     this.emit();
     await this.updateSettings({ blocked: this.db.settings.blocked });
-  }
-
-  async resetDemo(): Promise<void> {
-    /* no-op in production: data lives in Postgres */
   }
 
   /** surfaced by the store to explain schema-missing errors */
