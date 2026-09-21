@@ -361,21 +361,31 @@ $$;
 COMMIT;
 
 -- ============================================================================
--- VERIFICATION
+-- VERIFICATION QUERIES (optional - run separately to verify)
 -- ============================================================================
 
-\echo ''
-\echo '✓ Challenge posts architecture created'
-\echo ''
-\echo 'Tables:'
-\echo '  - challenge_posts (daily entries)'
-\echo '  - challenge_post_media (photos/videos)'
-\echo '  - challenge_post_likes'
-\echo '  - challenge_post_comments'
-\echo ''
-\echo 'Helper functions:'
-\echo '  - get_challenge_timeline(challenge_id) - get all posts for a challenge'
-\echo '  - get_explore_posts(limit) - get recent posts with media for Explore'
-\echo ''
-\echo 'Architecture: Challenge → Daily Posts → Media'
-\echo ''
+-- Check tables were created:
+-- SELECT table_name FROM information_schema.tables 
+-- WHERE table_schema = 'public' 
+-- AND table_name LIKE 'challenge_post%';
+
+-- Check functions were created:
+-- SELECT routine_name FROM information_schema.routines 
+-- WHERE routine_schema = 'public' 
+-- AND routine_name LIKE '%post%' OR routine_name LIKE 'get_%timeline';
+
+-- ============================================================================
+-- SUCCESS: Challenge posts architecture created
+-- 
+-- Tables:
+--   - challenge_posts (daily entries)
+--   - challenge_post_media (photos/videos)
+--   - challenge_post_likes
+--   - challenge_post_comments
+--
+-- Functions:
+--   - get_challenge_timeline(challenge_id)
+--   - get_explore_posts(limit)
+--
+-- Architecture: Challenge → Daily Posts → Media
+-- ============================================================================
