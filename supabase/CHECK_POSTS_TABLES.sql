@@ -18,3 +18,4 @@ ORDER BY table_name;
 
 -- If empty result, the migration hasn't been run yet
 -- Run: supabase/migrations/20260922000000_challenge_posts_architecture.sql
+
