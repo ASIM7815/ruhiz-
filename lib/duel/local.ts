@@ -16,9 +16,11 @@ import type { ActivityAction, AppNotification, Thread, UserProfile } from '@/lib
 import { uid } from '@/lib/format';
 import { defaultSettings, emptyDB, type DuelDB } from './db';
 import { isoDay, SEED_CATEGORIES } from './seed';
-import type { Challenge, ChallengeComment, Checkin, CreateChallengeInput, Participation } from './types';
+import type { Challenge, ChallengeComment, Checkin, CreateChallengeInput, FeedPost, Participation, PostComment } from './types';
 import { durationBucket } from './types';
-import type { DuelAdapter } from './adapter';
+import type { DuelAdapter, FeedQuery } from './adapter';
+import { buildUserKeywords, creatorAffinity, keywordOverlap } from './keywords';
+import { computeAffinity } from './recommend';
 
 const STORAGE_KEY = 'duel.db.v2';
 
@@ -589,6 +591,179 @@ export class LocalAdapter implements DuelAdapter {
     });
     if (this.db.searches.length > 400) this.db.searches = this.db.searches.slice(-400);
     this.emit();
+  }
+
+  /* ------------------------------ social feed ---------------------------- */
+
+  private postLikeCount(checkinId: string): number {
+    return this.db.postLikes.filter((l) => l.checkinId === checkinId).length;
+  }
+
+  private postCommentCount(checkinId: string): number {
+    return this.db.postComments.filter((c) => c.checkinId === checkinId).length;
+  }
+
+  private mapLocalPost(ck: Checkin, likedIds: Set<string>): FeedPost {
+    const ch = this.db.challenges.find((c) => c.id === ck.challengeId);
+    if (!ch) throw new Error('Challenge not found.');
+    const cat = this.db.categories.find((c) => c.id === ch.categoryId);
+    const author = this.db.profiles[ck.userId];
+    return {
+      id: ck.id,
+      challengeId: ck.challengeId,
+      challengeTitle: ch.title,
+      durationDays: ch.durationDays,
+      categoryId: ch.categoryId,
+      categoryName: cat?.name ?? '',
+      categoryEmoji: cat?.emoji ?? '•',
+      authorId: ck.userId,
+      authorName: author?.name ?? 'DUEL member',
+      authorUsername: author?.username ?? 'duelist',
+      authorAvatar: author?.avatar ?? null,
+      dayNumber: ck.dayNumber,
+      date: ck.date,
+      note: ck.note,
+      mediaUrl: ck.mediaUrl!,
+      mediaType: ck.mediaType!,
+      createdAt: ck.createdAt,
+      likeCount: this.postLikeCount(ck.id),
+      commentCount: this.postCommentCount(ck.id),
+      iLiked: likedIds.has(ck.id),
+      isMine: ck.userId === this.db.meId,
+    };
+  }
+
+  async loadFeed(query: FeedQuery): Promise<{ posts: FeedPost[]; hasMore: boolean }> {
+    const me = this.db.meId;
+    const pageSize = Math.min(Math.max(query.pageSize ?? 18, 1), 40);
+    const q = query.query.trim().toLowerCase();
+    const likedIds = new Set(this.db.postLikes.filter((l) => l.userId === me).map((l) => l.checkinId));
+
+    let list = this.db.checkins.filter((ck) => {
+      if (!ck.mediaUrl || !ck.mediaType) return false;
+      const ch = this.db.challenges.find((c) => c.id === ck.challengeId);
+      if (!ch) return false;
+      if (query.mediaType !== 'all' && ck.mediaType !== query.mediaType) return false;
+      if (query.categoryId && ch.categoryId !== query.categoryId) return false;
+      if (q && !(ck.note.toLowerCase().includes(q) || ch.title.toLowerCase().includes(q))) return false;
+      return true;
+    });
+
+    list = [...list].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 500);
+
+    if (query.sort === 'latest' || !me) {
+      const page = list.slice(query.page * pageSize, (query.page + 1) * pageSize);
+      return { posts: page.map((ck) => this.mapLocalPost(ck, likedIds)), hasMore: (query.page + 1) * pageSize < list.length };
+    }
+
+    /* "for you": same weighted formula as SQL duel_feed */
+    const aff = computeAffinity(this.db, me);
+    const kws = buildUserKeywords(this.db, me);
+
+    const maxCat = Math.max(0.0001, ...Object.values(aff.categories));
+    const scored = list.map((ck) => {
+      const ch = this.db.challenges.find((c) => c.id === ck.challengeId)!;
+      const catRaw = Math.max(0, aff.categories[ch.categoryId] ?? 0);
+      const kwRaw = keywordOverlap(kws, ck.note, ch.title, ch.tags);
+      const creatorRaw = creatorAffinity(this.db, me, ch.creatorId);
+      const engRaw = Math.log(1 + this.postLikeCount(ck.id) + 2 * this.postCommentCount(ck.id));
+      const ageHours = Math.max(0, (Date.now() - new Date(ck.createdAt).getTime()) / 3600_000);
+      const freshRaw = Math.exp(-ageHours / 72);
+      return { ck, catRaw, kwRaw, creatorRaw, engRaw, freshRaw, categoryId: ch.categoryId };
+    });
+    const maxKw = Math.max(0.0001, ...scored.map((s) => s.kwRaw));
+    const maxCreator = Math.max(0.0001, ...scored.map((s) => Math.log(1 + s.creatorRaw)));
+    const maxEng = Math.max(0.0001, ...scored.map((s) => s.engRaw));
+
+    const withScore = scored.map((s) => {
+      const base =
+        0.34 * (s.catRaw / maxCat) +
+        0.24 * (s.kwRaw / maxKw) +
+        0.16 * (Math.log(1 + s.creatorRaw) / maxCreator) +
+        0.12 * (s.engRaw / maxEng) +
+        0.14 * s.freshRaw;
+      const score = base * 100 + this.postJitter(me, s.ck.id) * 0.4;
+      return { ...s, score };
+    });
+
+    /* diversity: ≤2 per challenge, ≤3 per category, then paginate */
+    const perChallenge = new Map<string, number>();
+    const perCategory = new Map<string, number>();
+    const diverse = withScore
+      .sort((a, b) => b.score - a.score)
+      .filter((s) => {
+        const pc = perChallenge.get(s.ck.challengeId) ?? 0;
+        const pcat = perCategory.get(s.categoryId) ?? 0;
+        if (pc >= 2 || pcat >= 3) return false;
+        perChallenge.set(s.ck.challengeId, pc + 1);
+        perCategory.set(s.categoryId, pcat + 1);
+        return true;
+      });
+
+    const page = diverse.slice(query.page * pageSize, (query.page + 1) * pageSize);
+    return { posts: page.map((s) => this.mapLocalPost(s.ck, likedIds)), hasMore: (query.page + 1) * pageSize < diverse.length };
+  }
+
+  /** Stable per-user jitter (mirrors the SQL hashtext jitter). */
+  private postJitter(userId: string, postId: string): number {
+    const s = userId + ':' + postId;
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return (h % 1000) / 1000;
+  }
+
+  async loadChallengePosts(challengeId: string): Promise<FeedPost[]> {
+    const me = this.db.meId;
+    const likedIds = new Set(this.db.postLikes.filter((l) => l.userId === me).map((l) => l.checkinId));
+    return this.db.checkins
+      .filter((c) => c.challengeId === challengeId && c.mediaUrl && c.mediaType)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 250)
+      .map((ck) => this.mapLocalPost(ck, likedIds));
+  }
+
+  async togglePostLike(postId: string): Promise<boolean> {
+    const me = this.requireMe();
+    const idx = this.db.postLikes.findIndex((l) => l.checkinId === postId && l.userId === me);
+    if (idx >= 0) {
+      this.db.postLikes.splice(idx, 1);
+      this.emit();
+      return false;
+    }
+    this.db.postLikes.push({ checkinId: postId, userId: me, createdAt: new Date().toISOString() });
+    this.emit();
+    return true;
+  }
+
+  async loadPostComments(postId: string): Promise<PostComment[]> {
+    return this.db.postComments
+      .filter((c) => c.checkinId === postId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map((c) => ({ ...c }));
+  }
+
+  async addPostComment(postId: string, text: string): Promise<PostComment> {
+    const me = this.requireMe();
+    const body = text.trim().slice(0, 1000);
+    if (!body) throw new Error('Comment cannot be empty.');
+    const cm: PostComment = {
+      id: uid('pc-'),
+      checkinId: postId,
+      userId: me,
+      text: body,
+      createdAt: new Date().toISOString(),
+    };
+    this.db.postComments.push(cm);
+    this.emit();
+    return { ...cm };
+  }
+
+  async loadTrending(limit = 8): Promise<Challenge[]> {
+    return [...this.db.challenges]
+      .filter((c) => c.status === 'open')
+      .sort((a, b) => b.participantCount + b.likeCount * 2 + b.saveCount - (a.participantCount + a.likeCount * 2 + a.saveCount))
+      .slice(0, limit)
+      .map((c) => clone(c));
   }
 
   /* ------------------------------- messages ----------------------------- */

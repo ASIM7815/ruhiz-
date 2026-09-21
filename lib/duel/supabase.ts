@@ -28,8 +28,8 @@ import {
   ME_APP_ID,
 } from '@/lib/backend/api';
 import { defaultSettings, emptyDB, type DuelDB } from './db';
-import type { BootstrapResult, DuelAdapter } from './adapter';
-import type { Challenge, ChallengeComment, Checkin, CreateChallengeInput } from './types';
+import type { BootstrapResult, DuelAdapter, FeedQuery } from './adapter';
+import type { Challenge, ChallengeComment, Checkin, CreateChallengeInput, FeedPost, PostComment } from './types';
 import { durationBucket } from './types';
 
 function clone<T>(v: T): T {
@@ -483,6 +483,159 @@ export class SupabaseAdapter implements DuelAdapter {
     this.db.searches.unshift({ id: uid('s-'), userId: ME_APP_ID, query: q, createdAt: new Date().toISOString() });
     void Promise.resolve(this.sb.rpc('duel_track', { p_action: 'search', p_challenge_id: null, p_category_id: null, p_bucket: null, p_query: q })).catch(() => {});
     this.emit();
+  }
+
+  /* ------------------------------- feed -------------------------------- */
+
+  private mapFeedRow(row: any): FeedPost {
+    return {
+      id: row.post_id,
+      challengeId: row.challenge_id,
+      challengeTitle: row.challenge_title,
+      durationDays: row.duration_days,
+      categoryId: row.category_id,
+      categoryName: row.category_name,
+      categoryEmoji: row.category_emoji ?? '•',
+      authorId: this.ids.app(row.author_id),
+      authorName: row.author_name,
+      authorUsername: row.author_username,
+      authorAvatar: row.author_avatar ?? null,
+      dayNumber: row.day_number,
+      date: row.checkin_date,
+      note: row.note ?? '',
+      mediaUrl: row.media_url,
+      mediaType: row.media_type,
+      createdAt: row.created_at,
+      likeCount: row.like_count ?? 0,
+      commentCount: row.comment_count ?? 0,
+      iLiked: Boolean(row.my_liked),
+      isMine: Boolean(row.is_mine),
+    };
+  }
+
+  async loadFeed(query: FeedQuery): Promise<{ posts: FeedPost[]; hasMore: boolean }> {
+    const pageSize = Math.min(Math.max(query.pageSize ?? 18, 1), 40);
+    const { data, error } = await this.sb.rpc('duel_feed', {
+      p_media_type: query.mediaType === 'all' ? null : query.mediaType,
+      p_category: query.categoryId,
+      p_query: query.query || null,
+      p_sort: query.sort,
+      p_limit: pageSize,
+      p_offset: query.page * pageSize,
+    });
+    if (error) throw error;
+    const posts = (data as any[]).map((r) => this.mapFeedRow(r));
+    return { posts, hasMore: posts.length === pageSize };
+  }
+
+  async loadChallengePosts(challengeId: string): Promise<FeedPost[]> {
+    const ch = this.db.challenges.find((c) => c.id === challengeId);
+    const { data, error } = await this.sb
+      .from('challenge_checkins')
+      .select('*')
+      .eq('challenge_id', challengeId)
+      .order('created_at', { ascending: false })
+      .limit(250);
+    if (error) throw error;
+    // my-liked flags for these posts
+    let liked: string[] = [];
+    if (this.profileId) {
+      const { data: likes } = await this.sb
+        .from('checkin_likes')
+        .select('checkin_id')
+        .eq('user_id', this.profileId);
+      liked = (likes ?? []).map((l: any) => l.checkin_id);
+    }
+    const cat = ch ? this.db.categories.find((c) => c.id === ch.categoryId) : undefined;
+    return (data as any[])
+      .filter((r) => r.media_url && r.media_type)
+      .map((r) => ({
+        id: r.id,
+        challengeId: r.challenge_id,
+        challengeTitle: ch?.title ?? '',
+        durationDays: ch?.durationDays ?? 0,
+        categoryId: ch?.categoryId ?? '',
+        categoryName: cat?.name ?? '',
+        categoryEmoji: cat?.emoji ?? '•',
+        authorId: this.ids.app(r.user_id),
+        authorName: this.db.profiles[this.ids.app(r.user_id)]?.name ?? 'DUEL member',
+        authorUsername: this.db.profiles[this.ids.app(r.user_id)]?.username ?? 'duelist',
+        authorAvatar: this.db.profiles[this.ids.app(r.user_id)]?.avatar ?? null,
+        dayNumber: r.day_number,
+        date: r.checkin_date,
+        note: r.note ?? '',
+        mediaUrl: r.media_url,
+        mediaType: r.media_type,
+        createdAt: r.created_at,
+        likeCount: r.like_count ?? 0,
+        commentCount: r.comment_count ?? 0,
+        iLiked: liked.includes(r.id),
+        isMine: r.user_id === this.profileId,
+      }));
+  }
+
+  async togglePostLike(postId: string): Promise<boolean> {
+    if (!this.profileId) throw new Error('You need to be signed in to like posts.');
+    const { data: existing } = await this.sb
+      .from('checkin_likes')
+      .select('checkin_id')
+      .eq('checkin_id', postId)
+      .eq('user_id', this.profileId)
+      .maybeSingle();
+    if (existing) {
+      const { error } = await this.sb
+        .from('checkin_likes')
+        .delete()
+        .eq('checkin_id', postId)
+        .eq('user_id', this.profileId);
+      if (error) throw error;
+      return false;
+    }
+    const { error } = await this.sb
+      .from('checkin_likes')
+      .insert({ checkin_id: postId, user_id: this.profileId });
+    if (error) throw error;
+    return true;
+  }
+
+  private mapPostComment(row: any): PostComment {
+    return {
+      id: row.id,
+      checkinId: row.checkin_id,
+      userId: this.ids.app(row.user_id),
+      text: row.body,
+      createdAt: row.created_at,
+    };
+  }
+
+  async loadPostComments(postId: string): Promise<PostComment[]> {
+    const { data, error } = await this.sb
+      .from('checkin_comments')
+      .select('*')
+      .eq('checkin_id', postId)
+      .order('created_at', { ascending: true })
+      .limit(100);
+    if (error) throw error;
+    return (data ?? []).map((r: any) => this.mapPostComment(r));
+  }
+
+  async addPostComment(postId: string, text: string): Promise<PostComment> {
+    const body = text.trim().slice(0, 1000);
+    if (!body) throw new Error('Comment cannot be empty.');
+    if (!this.profileId) throw new Error('You need to be signed in to comment.');
+    const { data, error } = await this.sb
+      .from('checkin_comments')
+      .insert({ checkin_id: postId, user_id: this.profileId, body })
+      .select('*')
+      .single();
+    if (error) throw error;
+    return this.mapPostComment(data);
+  }
+
+  async loadTrending(limit = 8): Promise<Challenge[]> {
+    const { data, error } = await this.sb.rpc('duel_trending', { p_limit: limit });
+    if (error) throw error;
+    return (data as any[]).map((r) => ({ ...mapChallenge(r), creatorId: this.ids.app(r.creator_id) }));
   }
 
   /* ------------------------------- messages ----------------------------- */

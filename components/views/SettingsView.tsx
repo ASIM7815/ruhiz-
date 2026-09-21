@@ -129,7 +129,7 @@ export default function SettingsView() {
           </GhostButton>
         </Row>
         {store.dataMode === 'demo' && (
-          <Row label="Reset local data" hint="Clears this browser's DUEL database and restores the seed community.">
+          <Row label="Reset local data" hint="Clears this browser's local DUEL database (demo mode). Your account data on Supabase is untouched.">
             {confirmReset ? (
               <div className="flex gap-2">
                 <PrimaryButton

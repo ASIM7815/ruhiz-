@@ -5,11 +5,11 @@ import type { AppNotification, DataMode, Settings, Thread, UserProfile } from '@
 import { uid } from '@/lib/format';
 import { isSupabaseConfigured } from '@/lib/config';
 import { emptyDB, type DuelDB } from './db';
-import type { DuelAdapter } from './adapter';
+import type { DuelAdapter, FeedQuery } from './adapter';
 import { getLocalAdapter } from './local';
 import { SupabaseAdapter } from './supabase';
 import { rankChallenges, trendingCategories, type RankedChallenge } from './recommend';
-import type { Category, Challenge, ChallengeComment, ChallengeView, Checkin, CreateChallengeInput, Participation, SearchResults } from './types';
+import type { Category, Challenge, ChallengeComment, ChallengeView, Checkin, CreateChallengeInput, FeedPost, Participation, PostComment, SearchResults } from './types';
 import { ME_APP_ID } from '@/lib/backend/api';
 
 export interface Toast {
@@ -43,6 +43,13 @@ interface StoreShape {
   recommended: RankedChallenge[];
   recommendedViews: ChallengeView[];
   trending: { categoryId: string; challengeCount: number; participants: number }[];
+  trendingViews: ChallengeView[];
+  refreshTrending: () => Promise<void>;
+  loadFeed: (query: FeedQuery) => Promise<{ posts: FeedPost[]; hasMore: boolean }>;
+  loadChallengePosts: (challengeId: string) => Promise<FeedPost[]>;
+  togglePostLike: (postId: string) => Promise<boolean>;
+  loadPostComments: (postId: string) => Promise<PostComment[]>;
+  addPostComment: (postId: string, text: string) => Promise<PostComment | null>;
   myParticipations: Participation[];
   myActive: Participation[];
   myCompleted: Participation[];
@@ -226,6 +233,29 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   );
   const trending = useMemo(() => trendingCategories(db, 6), [db]);
 
+  /* True global top-N challenges (DB-ranked, not limited by the loaded page). */
+  const [trendingChallenges, setTrendingChallenges] = useState<Challenge[]>([]);
+  const refreshTrending = useCallback(async () => {
+    if (!dbRef.current.meId) return;
+    try {
+      const rows = await adapter.loadTrending(8);
+      setTrendingChallenges(rows);
+    } catch {
+      setTrendingChallenges([]);
+    }
+  }, [adapter]);
+  const trendingRef = useRef<Promise<void> | null>(null);
+  useEffect(() => {
+    if (hydrated && authed && !trendingRef.current) {
+      trendingRef.current = refreshTrending();
+    }
+    if (!authed) trendingRef.current = null;
+  }, [hydrated, authed, refreshTrending]);
+  const trendingViews = useMemo(
+    () => trendingChallenges.map((c) => getView(c)),
+    [trendingChallenges, getView]
+  );
+
   const myParticipations = useMemo(() => db.participants.filter((p) => p.userId === db.meId), [db.participants, db.meId]);
   const myActive = useMemo(() => myParticipations.filter((p) => p.status === 'active'), [myParticipations]);
   const myCompleted = useMemo(() => myParticipations.filter((p) => p.status === 'completed'), [myParticipations]);
@@ -371,6 +401,20 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     recommended,
     recommendedViews,
     trending,
+    trendingViews,
+    refreshTrending,
+    loadFeed: (query) => adapter.loadFeed(query),
+    loadChallengePosts: (challengeId) => adapter.loadChallengePosts(challengeId),
+    togglePostLike: (postId) => adapter.togglePostLike(postId),
+    loadPostComments: (postId) => adapter.loadPostComments(postId),
+    addPostComment: async (postId, text) => {
+      try {
+        return await adapter.addPostComment(postId, text);
+      } catch (err: any) {
+        toast(err?.message ?? 'Could not post the comment.', 'error');
+        return null;
+      }
+    },
     myParticipations,
     myActive,
     myCompleted,

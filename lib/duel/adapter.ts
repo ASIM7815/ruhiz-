@@ -1,6 +1,16 @@
 import type { ActivityAction, Settings, UserProfile } from '@/lib/types';
 import type { DuelDB } from './db';
-import type { Challenge, ChallengeComment, Checkin, CreateChallengeInput } from './types';
+import type { Challenge, ChallengeComment, Checkin, CreateChallengeInput, FeedMediaType, FeedPost, FeedSort, PostComment } from './types';
+
+/** Filters for the social post feed (Explore). */
+export interface FeedQuery {
+  mediaType: FeedMediaType;
+  categoryId: string | null;
+  query: string;
+  sort: FeedSort;
+  page: number; // 0-based
+  pageSize?: number;
+}
 
 export interface BootstrapResult {
   db: DuelDB;
@@ -45,6 +55,17 @@ export interface DuelAdapter {
   viewChallenge(id: string): Promise<void>;
   notInterested(id: string): Promise<void>;
   recordSearch(query: string): Promise<void>;
+
+  /* ---- social post feed (Explore) + per-post interactions ---- */
+  /** Public posts ranked for discovery (Explore). */
+  loadFeed(query: FeedQuery): Promise<{ posts: FeedPost[]; hasMore: boolean }>;
+  /** All public posts belonging to one challenge (its activity timeline). */
+  loadChallengePosts(challengeId: string): Promise<FeedPost[]>;
+  togglePostLike(postId: string): Promise<boolean>;
+  loadPostComments(postId: string): Promise<PostComment[]>;
+  addPostComment(postId: string, text: string): Promise<PostComment>;
+  /** True top-N open challenges (Home trending). */
+  loadTrending(limit?: number): Promise<Challenge[]>;
 
   openThreadWith(userId: string): Promise<string>;
   sendMessage(threadId: string, text: string): Promise<void>;

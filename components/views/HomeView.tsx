@@ -11,22 +11,26 @@ import { isoDay } from '@/lib/duel/seed';
 export default function HomeView() {
   const store = useStore();
   const { navigate } = useNav();
-  const { me, myActive, recommendedViews, db, hydrated } = store;
+  const { me, myActive, recommendedViews, trendingViews, db, hydrated } = store;
 
   const bestStreak = useMemo(() => myActive.reduce((m, p) => Math.max(m, p.currentStreak), 0), [myActive]);
   const checkedToday = myActive.some((p) => p.lastCheckinDate === isoDay(0));
 
-  const trending = useMemo(
+  /* Recently created open challenges (excluding ones already joined). */
+  const fresh = useMemo(
     () =>
       db.challenges
         .filter((c) => c.status === 'open' && !myActive.some((p) => p.challengeId === c.id))
-        .sort((a, b) => b.participantCount + b.likeCount - (a.participantCount + a.likeCount))
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
         .slice(0, 4)
         .map((c) => store.getView(c)),
     [db.challenges, myActive, store]
   );
 
   if (!hydrated) return <FeedSkeleton count={4} />;
+
+  const openCount = db.challenges.filter((c) => c.status === 'open').length;
+  const nothingAtAll = openCount === 0 && myActive.length === 0 && store.createdViews.length === 0;
 
   return (
     <div className="max-w-5xl mx-auto space-y-8 fade-in">
@@ -66,107 +70,137 @@ export default function HomeView() {
         </div>
       </section>
 
-      {/* Continue your duels */}
-      {myActive.length > 0 && (
-        <section>
-          <SectionHeader title="Continue your duels" icon="flame" action={{ label: 'My challenges', onClick: () => navigate('challenges') }} />
-          <div className="grid gap-4 sm:grid-cols-2">
-            {myActive.map((p) => {
-              const ch = db.challenges.find((c) => c.id === p.challengeId);
-              if (!ch) return null;
-              const view = store.getView(ch);
-              const dueToday = p.lastCheckinDate !== isoDay(0);
-              return (
-                <button
-                  key={p.challengeId}
-                  onClick={() => navigate('challenge', ch.id)}
-                  className="text-left bg-[var(--card)] border border-[var(--border)] rounded-2xl overflow-hidden hover:border-[var(--brand)]/40 transition-colors"
-                >
-                  <div className="h-20 relative">
-                    <Cover coverUrl={ch.coverUrl} category={view.category} title={ch.title} />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent" />
-                    <p className="absolute bottom-2 left-3 text-white font-bold text-sm display">{ch.title}</p>
-                  </div>
-                  <div className="p-4 space-y-2.5">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className={`flex items-center gap-1 font-bold ${p.currentStreak > 0 ? 'text-[var(--brand)]' : 'text-[var(--muted)]'}`}>
-                        <Icon name="flame" size={13} className={p.currentStreak > 0 ? 'flame-live' : ''} /> {p.currentStreak}-day streak
-                      </span>
-                      <span className="text-[var(--muted)]">
-                        {p.completedDays}/{ch.durationDays} days
-                      </span>
-                    </div>
-                    <ProgressBar value={p.completedDays} max={ch.durationDays} />
-                    <p className={`text-xs font-semibold ${dueToday ? 'text-[var(--brand)]' : 'text-[var(--muted)]'}`}>
-                      {dueToday ? `Day ${p.completedDays + 1} is open — check in now` : 'Checked in today ✓'}
-                    </p>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </section>
-      )}
-
-      {/* Recommended */}
-      <section>
-        <SectionHeader title="Recommended for you" icon="spark" subtitle="Ranked from your joins, check-ins, saves and searches" />
-        {recommendedViews.length === 0 ? (
-          <EmptyState
-            icon="target"
-            title="No open challenges left to recommend"
-            description="You have joined or completed everything matching your taste. Create the next one!"
-            action={<PrimaryButton onClick={() => navigate('create')}>Create challenge</PrimaryButton>}
-          />
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {recommendedViews.map((v) => (
-              <ChallengeCard key={v.id} view={v} />
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* Trending */}
-      <section>
-        <SectionHeader title="Trending this week" icon="trending" action={{ label: 'Explore all', onClick: () => navigate('explore') }} />
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {trending.map((v) => (
-            <ChallengeCard key={v.id} view={v} />
-          ))}
-        </div>
-      </section>
-
-      {/* My recent check-ins */}
-      <section className="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5">
-        <SectionHeader title="Latest check-ins" icon="chart" action={{ label: 'Progress', onClick: () => navigate('progress') }} />
-        <ul className="space-y-2.5 mt-3">
-          {db.checkins
-            .filter((c) => c.userId === store.db.meId)
-            .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-            .slice(0, 5)
-            .map((c) => {
-              const ch = db.challenges.find((x) => x.id === c.challengeId);
-              return (
-                <li key={c.id}>
-                  <button onClick={() => navigate('challenge', c.challengeId)} className="w-full flex items-center gap-3 text-left p-2 rounded-xl hover:bg-[var(--card-2)] transition-colors">
-                    <span className="w-9 h-9 rounded-xl bg-[var(--brand-soft)] text-[var(--brand)] font-bold text-xs flex items-center justify-center flex-shrink-0">
-                      D{c.dayNumber}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-semibold text-[var(--text)] truncate">{ch?.title ?? 'Challenge'}</span>
-                      <span className="block text-xs text-[var(--muted)] truncate">{c.note || 'Checked in'}</span>
-                    </span>
-                    <Icon name="arrowRight" size={14} className="text-[var(--muted)]" />
-                  </button>
-                </li>
-              );
-            })}
-          {db.checkins.filter((c) => c.userId === store.db.meId).length === 0 && (
-            <li className="text-sm text-[var(--muted)] py-2">No check-ins yet — your first day starts when you join a challenge.</li>
+      {nothingAtAll ? (
+        /* Real empty platform — no seeded content, no fakes. */
+        <EmptyState
+          icon="swords"
+          title="No challenges available yet"
+          description="Create the first challenge and start your duel — or invite friends to build the arena with you."
+          action={<PrimaryButton onClick={() => navigate('create')}>Create the first challenge</PrimaryButton>}
+        />
+      ) : (
+        <>
+          {/* Continue your duels */}
+          {myActive.length > 0 && (
+            <section>
+              <SectionHeader title="Continue your duels" icon="flame" action={{ label: 'My challenges', onClick: () => navigate('challenges') }} />
+              <div className="grid gap-4 sm:grid-cols-2">
+                {myActive.map((p) => {
+                  const ch = db.challenges.find((c) => c.id === p.challengeId);
+                  if (!ch) return null;
+                  const view = store.getView(ch);
+                  const dueToday = p.lastCheckinDate !== isoDay(0);
+                  return (
+                    <button
+                      key={p.challengeId}
+                      onClick={() => navigate('challenge', ch.id)}
+                      className="text-left bg-[var(--card)] border border-[var(--border)] rounded-2xl overflow-hidden hover:border-[var(--brand)]/40 transition-colors"
+                    >
+                      <div className="h-20 relative">
+                        <Cover coverUrl={ch.coverUrl} category={view.category} title={ch.title} />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent" />
+                        <p className="absolute bottom-2 left-3 text-white font-bold text-sm display">{ch.title}</p>
+                      </div>
+                      <div className="p-4 space-y-2.5">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className={`flex items-center gap-1 font-bold ${p.currentStreak > 0 ? 'text-[var(--brand)]' : 'text-[var(--muted)]'}`}>
+                            <Icon name="flame" size={13} className={p.currentStreak > 0 ? 'flame-live' : ''} /> {p.currentStreak}-day streak
+                          </span>
+                          <span className="text-[var(--muted)]">
+                            {p.completedDays}/{ch.durationDays} days
+                          </span>
+                        </div>
+                        <ProgressBar value={p.completedDays} max={ch.durationDays} />
+                        <p className={`text-xs font-semibold ${dueToday ? 'text-[var(--brand)]' : 'text-[var(--muted)]'}`}>
+                          {dueToday ? `Day ${p.completedDays + 1} is open — check in now` : 'Checked in today ✓'}
+                        </p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
           )}
-        </ul>
-      </section>
+
+          {/* Recommended */}
+          <section>
+            <SectionHeader title="Recommended for you" icon="spark" subtitle="Ranked from your joins, check-ins, saves and searches" />
+            {recommendedViews.length === 0 ? (
+              <EmptyState
+                icon="target"
+                title={openCount === 0 ? 'No open challenges right now' : 'No open challenges left to recommend'}
+                description={
+                  openCount === 0
+                    ? 'Every duel is either full, finished or yours. Create a fresh one and pull the community in.'
+                    : 'You have joined or completed everything matching your taste. Create the next one!'
+                }
+                action={<PrimaryButton onClick={() => navigate('create')}>Create challenge</PrimaryButton>}
+              />
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {recommendedViews.map((v) => (
+                  <ChallengeCard key={v.id} view={v} />
+                ))}
+              </div>
+            )}
+          </section>
+
+          {/* Trending — globally ranked in the database */}
+          {trendingViews.length > 0 && (
+            <section>
+              <SectionHeader title="Trending now" icon="trending" subtitle="Most joined, liked and saved across the whole arena" action={{ label: 'Explore all', onClick: () => navigate('explore') }} />
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                {trendingViews.slice(0, 4).map((v) => (
+                  <ChallengeCard key={v.id} view={v} />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Fresh drops */}
+          {fresh.length > 0 && (
+            <section>
+              <SectionHeader title="New challenges" icon="bolt" subtitle="Freshly created — get in before the crowd" action={{ label: 'Explore all', onClick: () => navigate('explore') }} />
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                {fresh.map((v) => (
+                  <ChallengeCard key={v.id} view={v} />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* My recent check-ins */}
+          <section className="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5">
+            <SectionHeader title="Latest check-ins" icon="chart" action={{ label: 'Progress', onClick: () => navigate('progress') }} />
+            <ul className="space-y-2.5 mt-3">
+              {db.checkins
+                .filter((c) => c.userId === store.db.meId)
+                .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+                .slice(0, 5)
+                .map((c) => {
+                  const ch = db.challenges.find((x) => x.id === c.challengeId);
+                  return (
+                    <li key={c.id}>
+                      <button onClick={() => navigate('challenge', c.challengeId)} className="w-full flex items-center gap-3 text-left p-2 rounded-xl hover:bg-[var(--card-2)] transition-colors">
+                        <span className="w-9 h-9 rounded-xl bg-[var(--brand-soft)] text-[var(--brand)] font-bold text-xs flex items-center justify-center flex-shrink-0">
+                          D{c.dayNumber}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm font-semibold text-[var(--text)] truncate">{ch?.title ?? 'Challenge'}</span>
+                          <span className="block text-xs text-[var(--muted)] truncate">{c.note || 'Checked in'}</span>
+                        </span>
+                        <span aria-hidden className="text-[var(--muted)]">→</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              {db.checkins.filter((c) => c.userId === store.db.meId).length === 0 && (
+                <li className="text-sm text-[var(--muted)] py-2">No check-ins yet — your first day starts when you join a challenge.</li>
+              )}
+            </ul>
+          </section>
+        </>
+      )}
     </div>
   );
 }

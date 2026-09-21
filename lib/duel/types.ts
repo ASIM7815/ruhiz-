@@ -69,6 +69,42 @@ export interface ChallengeComment {
   createdAt: string;
 }
 
+/** A public progress post (challenge_checkins row) enriched for social feeds. */
+export interface FeedPost {
+  id: string;
+  challengeId: string;
+  challengeTitle: string;
+  durationDays: number;
+  categoryId: string;
+  categoryName: string;
+  categoryEmoji: string;
+  authorId: string; // app id ('me' for the viewer's own posts)
+  authorName: string;
+  authorUsername: string;
+  authorAvatar: string | null;
+  dayNumber: number;
+  date: string; // yyyy-mm-dd
+  note: string;
+  mediaUrl: string;
+  mediaType: 'image' | 'video';
+  createdAt: string;
+  likeCount: number;
+  commentCount: number;
+  iLiked: boolean;
+  isMine: boolean;
+}
+
+export interface PostComment {
+  id: string;
+  checkinId: string;
+  userId: string;
+  text: string;
+  createdAt: string;
+}
+
+export type FeedMediaType = 'all' | 'image' | 'video';
+export type FeedSort = 'for_you' | 'latest';
+
 /** A challenge enriched with category/creator + the viewer's relationship to it. */
 export interface ChallengeView extends Challenge {
   category?: Category;
