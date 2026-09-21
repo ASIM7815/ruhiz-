@@ -37,6 +37,7 @@ function createStubServerClient(): ServerClient {
       signOut: async () => ({ error: null }),
     },
     from: () => stubQueryBuilder(),
+    rpc: async () => ({ data: null, error: NOT_CONFIGURED }),
   }
   return stub as unknown as ServerClient
 }

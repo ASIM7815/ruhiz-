@@ -63,27 +63,21 @@ export class SupabaseAdapter implements DuelAdapter {
   /* ------------------------------ bootstrap ----------------------------- */
 
   async bootstrap(): Promise<BootstrapResult> {
-    console.log('[SUPABASE BOOTSTRAP] Starting...');
     this.sb = safeClient();
     if (!this.sb) {
-      console.log('[SUPABASE BOOTSTRAP] No client available, returning unauthed');
       return { db: clone(this.db), authed: false };
     }
     const { data } = await this.sb.auth.getSession();
-    console.log('[SUPABASE BOOTSTRAP] Session:', data?.session ? 'EXISTS' : 'NULL', 'User:', data?.session?.user?.email);
     const user = data?.session?.user;
     if (!user) {
-      console.log('[SUPABASE BOOTSTRAP] No user in session, returning unauthed');
       return { db: clone(this.db), authed: false };
     }
 
-    console.log('[SUPABASE BOOTSTRAP] User found, ensuring profile...');
     
     // Try to ensure profile, but don't fail auth if this fails
     let profile;
     try {
       profile = await ensureProfile(this.sb, user);
-      console.log('[SUPABASE BOOTSTRAP] Profile ensured:', profile.username);
     } catch (err) {
       console.error('[SUPABASE BOOTSTRAP] Failed to ensure profile:', err);
       // User is authenticated even if profile load fails
@@ -198,7 +192,6 @@ export class SupabaseAdapter implements DuelAdapter {
 
     this.emit();
     this.subscribeRealtime();
-    console.log('[SUPABASE BOOTSTRAP] Complete! Returning authed = true');
     return { db: clone(this.db), authed: true };
   }
 
