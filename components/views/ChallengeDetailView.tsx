@@ -18,11 +18,10 @@ import {
   Spinner,
 } from '@/components/ui/Primitives';
 import ChallengeCard from '@/components/challenge/ChallengeCard';
-import CheckinModal from '@/components/challenge/CheckinModal';
 import CommentsPanel from '@/components/challenge/CommentsPanel';
 import { PostCard, PostLightbox } from '@/components/challenge/PostCard';
-import ChallengeTimeline from '@/components/challenge/ChallengeTimeline';
-import CreatePostModal from '@/components/challenge/CreatePostModal';
+import ChallengeDayTimeline from '@/components/challenge/ChallengeDayTimeline';
+import DailyPostModal from '@/components/challenge/DailyPostModal';
 import { compactCount, fullDate } from '@/lib/format';
 import { isoDay } from '@/lib/duel/seed';
 import { calculatePerformance, type DayTimelineItem, type PerformanceReport } from '@/lib/duel/performance';
@@ -33,13 +32,11 @@ export default function ChallengeDetailView({ challengeId }: { challengeId: stri
   const store = useStore();
   const { navigate } = useNav();
 
-  const [checkinOpen, setCheckinOpen] = useState(false);
-  const [checkinDay, setCheckinDay] = useState<number | undefined>(undefined);
-  const [editingCheckin, setEditingCheckin] = useState<Checkin | null>(null);
+  const [postDay, setPostDay] = useState<number | null>(null);
+  const [postsVersion, setPostsVersion] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
   const [timelineFilter, setTimelineFilter] = useState<'all' | 'completed' | 'missed' | 'pending'>('all');
   const [lightboxItem, setLightboxItem] = useState<{ checkin: Checkin; dayNumber: number } | null>(null);
-  const [createPostDay, setCreatePostDay] = useState<number | null>(null);
 
   const view = store.findById(challengeId);
 
@@ -139,10 +136,8 @@ export default function ChallengeDetailView({ challengeId }: { challengeId: stri
     if (threadId) navigate('messages', threadId);
   };
 
-  const openCheckinForDay = (day: number, existing?: Checkin) => {
-    setCheckinDay(day);
-    setEditingCheckin(existing ?? null);
-    setCheckinOpen(true);
+  const openCheckinForDay = (day: number) => {
+    setPostDay(day);
   };
 
   const filteredTimeline = performance.timeline.filter((item) => {
@@ -458,7 +453,7 @@ export default function ChallengeDetailView({ challengeId }: { challengeId: stri
       </section>
 
       {/* Challenge Activity — community feed of every participant's posts */}
-      <ChallengeActivitySection challengeId={view.id} />
+      <ChallengeActivitySection challengeId={view.id} refreshKey={postsVersion} />
 
       {/* Challenge Proof Timeline Section */}
       <section className="bg-[var(--card)] border border-[var(--border)] rounded-3xl p-5 sm:p-6 space-y-5">
@@ -518,7 +513,7 @@ export default function ChallengeDetailView({ challengeId }: { challengeId: stri
                 totalDays={view.durationDays}
                 isParticipant={Boolean(myPart)}
                 isViewerOwner={isViewingSelf}
-                onOpenUpload={() => openCheckinForDay(item.dayNumber, item.checkin)}
+                onOpenUpload={() => openCheckinForDay(item.dayNumber)}
                 onViewMedia={(ck) => setLightboxItem({ checkin: ck, dayNumber: item.dayNumber })}
               />
             ))}
@@ -529,13 +524,15 @@ export default function ChallengeDetailView({ challengeId }: { challengeId: stri
       {/* Comments Panel */}
       <CommentsPanel challengeId={view.id} />
 
-      {/* Challenge Timeline - Real Posts */}
-      <ChallengeTimeline
+      {/* Challenge → Day 1 → Day 2 … with real posts */}
+      <ChallengeDayTimeline
         challengeId={challengeId}
         durationDays={view.durationDays}
-        isParticipant={!!myPart}
-        userId={store.db.meId}
-        onCreatePost={(dayNumber) => setCreatePostDay(dayNumber)}
+        focusUserId={activeUserId}
+        focusJoinedAt={activeParticipation?.joinedAt ?? null}
+        isParticipant={Boolean(myPart) && isViewingSelf}
+        refreshKey={postsVersion}
+        onCreatePost={(dayNumber) => setPostDay(dayNumber)}
       />
 
       {/* Similar challenges in category */}
@@ -552,17 +549,21 @@ export default function ChallengeDetailView({ challengeId }: { challengeId: stri
         </section>
       )}
 
-      {/* Daily Proof Upload Modal */}
-      <CheckinModal
-        view={view}
-        open={checkinOpen}
-        dayNumber={checkinDay}
-        initialCheckin={editingCheckin}
-        onClose={() => {
-          setCheckinOpen(false);
-          setEditingCheckin(null);
-        }}
-      />
+      {/* Daily post modal (description + photos/videos → duel_submit_daily_post) */}
+      {postDay !== null && (
+        <DailyPostModal
+          open
+          onClose={() => setPostDay(null)}
+          challengeId={challengeId}
+          challengeTitle={view.title}
+          durationDays={view.durationDays}
+          dayNumber={postDay}
+          onPosted={() => {
+            setPostDay(null);
+            setPostsVersion((v) => v + 1);
+          }}
+        />
+      )}
 
       {/* Full Resolution Media Lightbox Modal */}
       {lightboxItem && (
@@ -574,20 +575,6 @@ export default function ChallengeDetailView({ challengeId }: { challengeId: stri
         />
       )}
 
-      {/* Create Post Modal */}
-      {createPostDay && (
-        <CreatePostModal
-          challengeId={challengeId}
-          challengeTitle={view.title}
-          dayNumber={createPostDay}
-          onClose={() => setCreatePostDay(null)}
-          onSuccess={() => {
-            setCreatePostDay(null);
-            // Refresh timeline by triggering a re-render
-            window.location.reload();
-          }}
-        />
-      )}
     </div>
   );
 }
@@ -867,7 +854,7 @@ function MediaLightboxModal({
 
 /* ------------------ Challenge Activity (community posts) ------------------ */
 
-function ChallengeActivitySection({ challengeId }: { challengeId: string }) {
+function ChallengeActivitySection({ challengeId, refreshKey = 0 }: { challengeId: string; refreshKey?: number }) {
   const store = useStore();
   const [posts, setPosts] = useState<FeedPost[] | null>(null);
   const [openPost, setOpenPost] = useState<FeedPost | null>(null);
@@ -887,7 +874,7 @@ function ChallengeActivitySection({ challengeId }: { challengeId: string }) {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [challengeId, store.authed, store.hydrated]);
+  }, [challengeId, refreshKey, store.authed, store.hydrated]);
 
   return (
     <section className="bg-[var(--card)] border border-[var(--border)] rounded-3xl p-5 sm:p-6 space-y-5">

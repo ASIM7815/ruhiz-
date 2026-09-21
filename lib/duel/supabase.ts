@@ -29,7 +29,7 @@ import {
 } from '@/lib/backend/api';
 import { defaultSettings, emptyDB, type DuelDB } from './db';
 import type { BootstrapResult, DuelAdapter, FeedQuery } from './adapter';
-import type { Challenge, ChallengeComment, Checkin, CreateChallengeInput, FeedPost, PostComment } from './types';
+import type { Challenge, ChallengeComment, ChallengePostMedia, Checkin, CreateChallengeInput, FeedPost, Participation, PostComment, SubmitPostInput } from './types';
 import { durationBucket } from './types';
 
 function clone<T>(v: T): T {
@@ -63,27 +63,21 @@ export class SupabaseAdapter implements DuelAdapter {
   /* ------------------------------ bootstrap ----------------------------- */
 
   async bootstrap(): Promise<BootstrapResult> {
-    console.log('[SUPABASE BOOTSTRAP] Starting...');
     this.sb = safeClient();
     if (!this.sb) {
-      console.log('[SUPABASE BOOTSTRAP] No client available, returning unauthed');
       return { db: clone(this.db), authed: false };
     }
     const { data } = await this.sb.auth.getSession();
-    console.log('[SUPABASE BOOTSTRAP] Session:', data?.session ? 'EXISTS' : 'NULL', 'User:', data?.session?.user?.email);
     const user = data?.session?.user;
     if (!user) {
-      console.log('[SUPABASE BOOTSTRAP] No user in session, returning unauthed');
       return { db: clone(this.db), authed: false };
     }
 
-    console.log('[SUPABASE BOOTSTRAP] User found, ensuring profile...');
     
     // Try to ensure profile, but don't fail auth if this fails
     let profile;
     try {
       profile = await ensureProfile(this.sb, user);
-      console.log('[SUPABASE BOOTSTRAP] Profile ensured:', profile.username);
     } catch (err) {
       console.error('[SUPABASE BOOTSTRAP] Failed to ensure profile:', err);
       // User is authenticated even if profile load fails
@@ -101,13 +95,17 @@ export class SupabaseAdapter implements DuelAdapter {
     // Load data - if these fail, user is STILL authenticated, just with empty data
     let profileRows, catRows, chRows, partRows, ckRows, cmRows, likeRows, saveRows, actRows, searchRows, notifRows;
     
+    let settingsRow = { data: null as any, error: null as any };
+
     try {
-      [profileRows, catRows, chRows, partRows, ckRows, cmRows, likeRows, saveRows, actRows, searchRows, notifRows] =
+      [profileRows, catRows, chRows, partRows, ckRows, cmRows, likeRows, saveRows, actRows, searchRows, notifRows, settingsRow] =
         await Promise.all([
           this.sb.from('profiles').select('*'),
           this.sb.from('duel_categories').select('*').order('sort'),
           this.sb.from('challenges').select('*').order('created_at', { ascending: false }).limit(400),
-          this.sb.from('challenge_participants').select('*').eq('user_id', profile.id),
+          // every participant of the loaded challenges (so detail pages can
+          // show and compare real challengers, not just the viewer)
+          this.sb.from('challenge_participants').select('*').limit(2000),
           this.sb.from('challenge_checkins').select('*').eq('user_id', profile.id).order('checkin_date', { ascending: false }).limit(800),
           this.sb.from('challenge_comments').select('*').order('created_at', { ascending: true }).limit(1500),
           this.sb.from('challenge_likes').select('challenge_id').eq('user_id', profile.id),
@@ -115,6 +113,7 @@ export class SupabaseAdapter implements DuelAdapter {
           this.sb.from('activities').select('*').eq('user_id', profile.id).order('created_at', { ascending: false }).limit(800),
           this.sb.from('searches').select('*').eq('user_id', profile.id).order('created_at', { ascending: false }).limit(200),
           this.sb.from('notifications').select('*').eq('user_id', profile.id).order('created_at', { ascending: false }).limit(80),
+          this.sb.from('user_settings').select('settings').eq('user_id', profile.id).maybeSingle(),
         ]);
 
       // Log any errors but don't throw
@@ -180,7 +179,7 @@ export class SupabaseAdapter implements DuelAdapter {
       searches: (searchRows?.data ?? []).map((r: any) => ({ id: r.id, userId: ME_APP_ID, query: r.query, createdAt: r.created_at })),
       notifications: (notifRows?.data ?? []).map((r: any) => mapNotification(r, this.ids)),
       threads: [],
-      settings: { ...defaultSettings(), ...(profile.settings ?? {}) },
+      settings: { ...defaultSettings(), ...((settingsRow?.data?.settings as Partial<Settings>) ?? {}) },
     };
 
     try {
@@ -193,7 +192,6 @@ export class SupabaseAdapter implements DuelAdapter {
 
     this.emit();
     this.subscribeRealtime();
-    console.log('[SUPABASE BOOTSTRAP] Complete! Returning authed = true');
     return { db: clone(this.db), authed: true };
   }
 
@@ -215,6 +213,34 @@ export class SupabaseAdapter implements DuelAdapter {
       )
       .subscribe();
     this.channels.push(ch);
+
+    // Live messages: rows arrive for conversations the member is part of;
+    // Postgres RLS + the publication scope keep foreign threads invisible.
+    const chMsg = this.sb
+      .channel('duel:messages')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'messages' },
+        (payload: any) => {
+          const row = payload.new ?? {};
+          const thread = this.db.threads.find((t) => t.id === row.conversation_id);
+          if (!thread || thread.messages.some((m) => m.id === row.id)) return;
+          thread.messages.push({
+            id: row.id,
+            fromMe: row.sender_id === this.profileId,
+            text: row.content ?? '',
+            at: row.created_at,
+          });
+          if (!thread.messages[thread.messages.length - 1].fromMe) {
+            thread.unread += 1;
+          }
+          thread.lastMessageAt = row.created_at;
+          this.db.threads = [...this.db.threads];
+          this.emit();
+        }
+      )
+      .subscribe();
+    this.channels.push(chMsg);
   }
 
   /* ------------------------------- behaviour ---------------------------- */
@@ -318,71 +344,85 @@ export class SupabaseAdapter implements DuelAdapter {
     this.emit();
   }
 
-  async checkin(
-    challengeId: string,
-    note: string,
-    mediaUrl?: string | null,
-    mediaType?: 'image' | 'video' | null,
-    dayNumber?: number
-  ): Promise<Checkin> {
-    // Attempt modern RPC with media parameters
-    let data: any = null;
-    let error: any = null;
+  /** Submit (create or edit) a daily post — description + photo/video media. */
+  async submitDailyPost(
+    input: SubmitPostInput
+  ): Promise<{ post: FeedPost; participation: Participation | null }> {
+    if (!this.profileId) throw new Error('You need to be signed in to post.');
+    const { data, error } = await this.sb.rpc('duel_submit_daily_post', {
+      p_challenge_id: input.challengeId,
+      p_day_number: input.dayNumber,
+      p_caption: input.caption ?? '',
+      p_media: input.media,
+    });
+    if (error) throw error;
 
-    try {
-      const res = await this.sb.rpc('duel_checkin', {
-        p_challenge_id: challengeId,
-        p_note: note,
-        p_media_url: mediaUrl ?? null,
-        p_media_type: mediaType ?? null,
-        p_day_number: dayNumber ?? null,
-      });
-      data = res.data;
-      error = res.error;
-    } catch (rpcErr) {
-      error = rpcErr;
-    }
-
-    // Fallback if database RPC has older 2-arg signature
-    if (error && (error.code === 'PGRST202' || error.message?.includes('parameters'))) {
-      const legacyRes = await this.sb.rpc('duel_checkin', {
-        p_challenge_id: challengeId,
-        p_note: note,
-      });
-      if (legacyRes.error) throw legacyRes.error;
-      data = legacyRes.data;
-      error = null;
-
-      // Update the newly created checkin row with mediaUrl/mediaType if present
-      if (data?.checkin?.id && (mediaUrl || mediaType)) {
-        await this.sb
-          .from('challenge_checkins')
-          .update({ media_url: mediaUrl ?? null, media_type: mediaType ?? null })
-          .eq('id', data.checkin.id);
-        data.checkin.media_url = mediaUrl ?? null;
-        data.checkin.media_type = mediaType ?? null;
-      }
-    } else if (error) {
-      throw error;
-    }
-
-    const row = data?.checkin;
     const part = data?.participation;
     if (part) {
-      this.db.participants = this.db.participants.filter((p) => p.challengeId !== challengeId);
+      this.db.participants = this.db.participants.filter((p) => p.challengeId !== input.challengeId);
       this.db.participants.push(mapParticipation({ ...part, user_id: this.profileId }, this.ids));
     }
-    const ck = row ? mapCheckin({ ...row, user_id: this.profileId }, this.ids) : null;
-    if (ck) {
-      // Update checkins in local db snapshot
-      this.db.checkins = this.db.checkins.filter((c) => c.id !== ck.id);
-      this.db.checkins.push(ck);
-    }
-    const ch = this.db.challenges.find((c) => c.id === challengeId);
-    if (ch && ck) this.track('checkin', ch);
+
+    const row = data?.post;
+    if (!row) throw new Error('The daily post was not recorded.');
+    const post = this.mapPostRow(row);
+
+    // Keep the derived check-in ledger snapshot in sync for progress views.
+    const ck: Checkin = {
+      id: row.id,
+      challengeId: row.challenge_id,
+      userId: ME_APP_ID,
+      dayNumber: row.day_number,
+      date: row.post_date,
+      note: row.caption ?? '',
+      mediaUrl: post.mediaUrl,
+      mediaType: post.mediaType,
+      media: post.media,
+      createdAt: row.created_at,
+    };
+    this.db.checkins = this.db.checkins.filter((c) => !(c.challengeId === ck.challengeId && c.userId === ME_APP_ID && c.dayNumber === ck.dayNumber));
+    this.db.checkins.push(ck);
+
+    const ch = this.db.challenges.find((c) => c.id === input.challengeId);
+    if (ch) this.track('checkin', ch);
     this.emit();
-    if (!ck) throw new Error('Check-in was not recorded.');
-    return ck;
+    return {
+      post,
+      participation: part ? mapParticipation({ ...part, user_id: this.profileId }, this.ids) : null,
+    };
+  }
+
+  /** Delete one of the caller's own daily posts (RLS enforces ownership). */
+  async deletePost(postId: string): Promise<void> {
+    if (!this.profileId) throw new Error('You need to be signed in.');
+    const { data: mediaRows } = await this.sb.from('challenge_post_media').select('url').eq('post_id', postId);
+    const { data: postRow } = await this.sb.from('challenge_posts').select('*').eq('id', postId).maybeSingle();
+    const { error } = await this.sb.from('challenge_posts').delete().eq('id', postId);
+    if (error) throw error;
+
+    // Best-effort cleanup of owned storage objects (DB rows cascade already).
+    for (const m of mediaRows ?? []) {
+      if (typeof m.url === 'string' && m.url.startsWith('supa://')) {
+        void import('@/lib/upload').then(({ deleteMedia }) => deleteMedia(m.url).catch(() => {}));
+      }
+    }
+
+    if (postRow) {
+      this.db.checkins = this.db.checkins.filter(
+        (c) => !(c.challengeId === postRow.challenge_id && c.userId === ME_APP_ID && c.dayNumber === postRow.day_number)
+      );
+      this.db.participants = this.db.participants.map((p) => {
+        if (p.challengeId !== postRow.challenge_id || p.userId !== ME_APP_ID) return p;
+        const completedDays = Math.max(0, p.completedDays - 1);
+        return {
+          ...p,
+          completedDays,
+          currentStreak: Math.max(0, p.currentStreak - 1),
+          status: p.status === 'completed' ? 'active' : p.status,
+        };
+      });
+    }
+    this.emit();
   }
 
   async toggleLike(id: string): Promise<boolean> {
@@ -487,30 +527,85 @@ export class SupabaseAdapter implements DuelAdapter {
 
   /* ------------------------------- feed -------------------------------- */
 
+  private mapMediaList(raw: any): ChallengePostMedia[] {
+    if (!Array.isArray(raw)) return [];
+    return raw.map((m: any, i: number) => ({
+      id: m.id ?? `m-${i}`,
+      mediaType: (m.type ?? m.mediaType) === 'video' ? 'video' : 'image',
+      url: m.url,
+      thumbnailUrl: m.thumbnailUrl ?? null,
+      width: m.width ?? null,
+      height: m.height ?? null,
+      durationMs: m.durationMs ?? null,
+      fileSize: m.fileSize ?? null,
+      sortOrder: m.sortOrder ?? i,
+      createdAt: m.createdAt,
+    }));
+  }
+
+  /** Row → FeedPost for both duel_feed() and get_challenge_timeline() shapes. */
   private mapFeedRow(row: any): FeedPost {
+    const media = this.mapMediaList(row.media);
+    const authorId = this.ids.app(row.author_id ?? row.user_id);
+    const author = this.db.profiles[authorId];
     return {
-      id: row.post_id,
+      id: row.post_id ?? row.id,
       challengeId: row.challenge_id,
-      challengeTitle: row.challenge_title,
-      durationDays: row.duration_days,
-      categoryId: row.category_id,
-      categoryName: row.category_name,
+      challengeTitle: row.challenge_title ?? this.db.challenges.find((c) => c.id === row.challenge_id)?.title ?? '',
+      durationDays: row.duration_days ?? this.db.challenges.find((c) => c.id === row.challenge_id)?.durationDays ?? 0,
+      categoryId: row.category_id ?? this.db.challenges.find((c) => c.id === row.challenge_id)?.categoryId ?? '',
+      categoryName: row.category_name ?? '',
       categoryEmoji: row.category_emoji ?? '•',
-      authorId: this.ids.app(row.author_id),
-      authorName: row.author_name,
-      authorUsername: row.author_username,
-      authorAvatar: row.author_avatar ?? null,
+      authorId,
+      authorName: row.author_name ?? row.display_name ?? author?.name ?? 'DUEL member',
+      authorUsername: row.author_username ?? row.username ?? author?.username ?? 'duelist',
+      authorAvatar: row.author_avatar ?? row.avatar_url ?? author?.avatar ?? null,
       dayNumber: row.day_number,
-      date: row.checkin_date,
-      note: row.note ?? '',
-      mediaUrl: row.media_url,
-      mediaType: row.media_type,
+      date: String(row.checkin_date ?? row.post_date ?? '').slice(0, 10),
+      note: row.note ?? row.caption ?? '',
+      mediaUrl: media[0]?.url ?? row.media_url ?? null,
+      mediaType: media[0]?.mediaType ?? row.media_type ?? null,
+      media,
       createdAt: row.created_at,
       likeCount: row.like_count ?? 0,
       commentCount: row.comment_count ?? 0,
       iLiked: Boolean(row.my_liked),
-      isMine: Boolean(row.is_mine),
+      isMine: row.is_mine !== undefined ? Boolean(row.is_mine) : (row.author_id ?? row.user_id) === this.profileId,
     };
+  }
+
+  /** Row → Checkin (derived ledger / progress views). */
+  private postRowToCheckin(row: any): Checkin {
+    const post = this.mapFeedRow(row);
+    return {
+      id: post.id,
+      challengeId: post.challengeId,
+      userId: post.authorId,
+      dayNumber: post.dayNumber,
+      date: post.date,
+      note: post.note,
+      mediaUrl: post.mediaUrl,
+      mediaType: post.mediaType,
+      media: post.media,
+      createdAt: post.createdAt,
+    };
+  }
+
+  /** Raw challenge_posts row (to_jsonb + media) → FeedPost. */
+  private mapPostRow(row: any): FeedPost {
+    return this.mapFeedRow({
+      post_id: row.id,
+      challenge_id: row.challenge_id,
+      author_id: row.user_id,
+      day_number: row.day_number,
+      checkin_date: row.post_date,
+      note: row.caption,
+      created_at: row.created_at,
+      like_count: row.like_count,
+      comment_count: row.comment_count,
+      my_liked: false,
+      media: row.media,
+    });
   }
 
   async loadFeed(query: FeedQuery): Promise<{ posts: FeedPost[]; hasMore: boolean }> {
@@ -529,71 +624,58 @@ export class SupabaseAdapter implements DuelAdapter {
   }
 
   async loadChallengePosts(challengeId: string): Promise<FeedPost[]> {
-    const ch = this.db.challenges.find((c) => c.id === challengeId);
-    const { data, error } = await this.sb
-      .from('challenge_checkins')
-      .select('*')
-      .eq('challenge_id', challengeId)
-      .order('created_at', { ascending: false })
-      .limit(250);
+    const { data, error } = await this.sb.rpc('get_challenge_timeline', {
+      p_challenge_id: challengeId,
+    });
     if (error) throw error;
-    // my-liked flags for these posts
-    let liked: string[] = [];
-    if (this.profileId) {
+    const posts = (data as any[]).map((r) =>
+      this.mapFeedRow({
+        ...r,
+        post_id: r.post_id ?? r.id,
+        checkin_date: r.post_date ?? r.checkin_date,
+        note: r.caption ?? r.note,
+      })
+    );
+    // my-liked flags for these posts (used by lightboxes on the timeline)
+    if (this.profileId && posts.length) {
       const { data: likes } = await this.sb
-        .from('checkin_likes')
-        .select('checkin_id')
-        .eq('user_id', this.profileId);
-      liked = (likes ?? []).map((l: any) => l.checkin_id);
+        .from('challenge_post_likes')
+        .select('post_id')
+        .eq('user_id', this.profileId)
+        .in('post_id', posts.map((p) => p.id));
+      const liked = new Set((likes ?? []).map((l: any) => l.post_id));
+      for (const p of posts) p.iLiked = liked.has(p.id);
     }
-    const cat = ch ? this.db.categories.find((c) => c.id === ch.categoryId) : undefined;
-    return (data as any[])
-      .filter((r) => r.media_url && r.media_type)
-      .map((r) => ({
-        id: r.id,
-        challengeId: r.challenge_id,
-        challengeTitle: ch?.title ?? '',
-        durationDays: ch?.durationDays ?? 0,
-        categoryId: ch?.categoryId ?? '',
-        categoryName: cat?.name ?? '',
-        categoryEmoji: cat?.emoji ?? '•',
-        authorId: this.ids.app(r.user_id),
-        authorName: this.db.profiles[this.ids.app(r.user_id)]?.name ?? 'DUEL member',
-        authorUsername: this.db.profiles[this.ids.app(r.user_id)]?.username ?? 'duelist',
-        authorAvatar: this.db.profiles[this.ids.app(r.user_id)]?.avatar ?? null,
-        dayNumber: r.day_number,
-        date: r.checkin_date,
-        note: r.note ?? '',
-        mediaUrl: r.media_url,
-        mediaType: r.media_type,
-        createdAt: r.created_at,
-        likeCount: r.like_count ?? 0,
-        commentCount: r.comment_count ?? 0,
-        iLiked: liked.includes(r.id),
-        isMine: r.user_id === this.profileId,
-      }));
+    return posts;
+  }
+
+  async loadUserPosts(userId: string): Promise<FeedPost[]> {
+    const profileId = userId === ME_APP_ID || userId === this.db.meId ? this.profileId : this.ids.profile(userId);
+    const { data, error } = await this.sb.rpc('get_user_posts', { p_user: profileId });
+    if (error) throw error;
+    return (data as any[]).map((r) => this.mapFeedRow(r));
   }
 
   async togglePostLike(postId: string): Promise<boolean> {
     if (!this.profileId) throw new Error('You need to be signed in to like posts.');
     const { data: existing } = await this.sb
-      .from('checkin_likes')
-      .select('checkin_id')
-      .eq('checkin_id', postId)
+      .from('challenge_post_likes')
+      .select('post_id')
+      .eq('post_id', postId)
       .eq('user_id', this.profileId)
       .maybeSingle();
     if (existing) {
       const { error } = await this.sb
-        .from('checkin_likes')
+        .from('challenge_post_likes')
         .delete()
-        .eq('checkin_id', postId)
+        .eq('post_id', postId)
         .eq('user_id', this.profileId);
       if (error) throw error;
       return false;
     }
     const { error } = await this.sb
-      .from('checkin_likes')
-      .insert({ checkin_id: postId, user_id: this.profileId });
+      .from('challenge_post_likes')
+      .insert({ post_id: postId, user_id: this.profileId });
     if (error) throw error;
     return true;
   }
@@ -601,7 +683,7 @@ export class SupabaseAdapter implements DuelAdapter {
   private mapPostComment(row: any): PostComment {
     return {
       id: row.id,
-      checkinId: row.checkin_id,
+      checkinId: row.post_id ?? row.checkin_id,
       userId: this.ids.app(row.user_id),
       text: row.body,
       createdAt: row.created_at,
@@ -610,9 +692,9 @@ export class SupabaseAdapter implements DuelAdapter {
 
   async loadPostComments(postId: string): Promise<PostComment[]> {
     const { data, error } = await this.sb
-      .from('checkin_comments')
+      .from('challenge_post_comments')
       .select('*')
-      .eq('checkin_id', postId)
+      .eq('post_id', postId)
       .order('created_at', { ascending: true })
       .limit(100);
     if (error) throw error;
@@ -624,8 +706,8 @@ export class SupabaseAdapter implements DuelAdapter {
     if (!body) throw new Error('Comment cannot be empty.');
     if (!this.profileId) throw new Error('You need to be signed in to comment.');
     const { data, error } = await this.sb
-      .from('checkin_comments')
-      .insert({ checkin_id: postId, user_id: this.profileId, body })
+      .from('challenge_post_comments')
+      .insert({ post_id: postId, user_id: this.profileId, body })
       .select('*')
       .single();
     if (error) throw error;
@@ -713,7 +795,11 @@ export class SupabaseAdapter implements DuelAdapter {
   async updateSettings(patch: Partial<Settings>): Promise<void> {
     this.db.settings = { ...this.db.settings, ...patch };
     this.emit();
-    void Promise.resolve(this.sb.from('profiles').update({ settings: this.db.settings }).eq('id', this.profileId)).catch(() => {});
+    void Promise.resolve(
+      this.sb
+        .from('user_settings')
+        .upsert({ user_id: this.profileId, settings: this.db.settings, updated_at: new Date().toISOString() })
+    ).catch(() => {});
   }
 
   async blockUser(id: string): Promise<void> {

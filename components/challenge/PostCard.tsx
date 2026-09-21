@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Icon } from '@/components/ui/Icons';
 import { Avatar, Modal, Spinner } from '@/components/ui/Primitives';
 import { R2Image, R2Video } from '@/components/ui/Media';
@@ -24,7 +24,11 @@ export function PostCard({
       className="group relative w-full aspect-[9/14] rounded-2xl overflow-hidden bg-[var(--card-2)] border border-[var(--border)] hover:border-[var(--brand)]/50 transition-colors text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
       aria-label={`Post by @${post.authorUsername} — ${post.challengeTitle}, day ${post.dayNumber}`}
     >
-      {post.mediaType === 'video' ? (
+      {post.mediaUrl == null ? (
+        <div className="absolute inset-0 bg-gradient-to-br from-[var(--card-2)] to-black/60 flex items-center justify-center p-4">
+          <p className="text-[13px] text-white/80 font-medium line-clamp-4 text-center">{post.note || 'Day post'}</p>
+        </div>
+      ) : post.mediaType === 'video' ? (
         <video
           src={post.mediaUrl}
           className="absolute inset-0 w-full h-full object-cover"
@@ -44,11 +48,18 @@ export function PostCard({
       <span className="absolute top-2.5 left-2.5 px-2.5 py-1 rounded-full bg-black/70 backdrop-blur text-white text-[11px] font-bold display flex items-center gap-1">
         <Icon name="calendar" size={11} className="text-[var(--brand)]" /> DAY {post.dayNumber}
       </span>
-      {post.mediaType === 'video' && (
-        <span className="absolute top-2.5 right-2.5 w-7 h-7 rounded-full bg-black/70 backdrop-blur flex items-center justify-center">
-          <Icon name="play" size={13} className="text-[var(--brand)]" />
-        </span>
-      )}
+      <span className="absolute top-2.5 right-2.5 flex items-center gap-1.5">
+        {(post.media?.length ?? 0) > 1 && (
+          <span className="px-2 h-7 rounded-full bg-black/70 backdrop-blur text-white text-[11px] font-bold flex items-center gap-1">
+            <Icon name="image" size={11} /> {post.media.length}
+          </span>
+        )}
+        {post.mediaType === 'video' && (
+          <span className="w-7 h-7 rounded-full bg-black/70 backdrop-blur flex items-center justify-center">
+            <Icon name="play" size={13} className="text-[var(--brand)]" />
+          </span>
+        )}
+      </span>
 
       <div className="absolute bottom-0 inset-x-0 p-3 flex flex-col gap-1.5">
         <span className="text-[12px] font-bold text-white truncate flex items-center gap-1.5">
@@ -85,6 +96,20 @@ export function PostLightbox({ post, onClose }: { post: FeedPost; onClose: () =>
   const [comments, setComments] = useState<PostComment[] | null>(null);
   const [draft, setDraft] = useState('');
   const [posting, setPosting] = useState(false);
+  const [mediaIdx, setMediaIdx] = useState(0);
+  const [busyDelete, setBusyDelete] = useState(false);
+  const mediaList = useMemo(() => {
+    const arr: Array<{ mediaType: 'image' | 'video'; url: string }> = (post.media ?? []).map((m) => ({
+      mediaType: m.mediaType,
+      url: m.url,
+    }));
+    if (arr.length === 0 && post.mediaUrl) {
+      arr.push({ mediaType: (post.mediaType ?? 'image') as 'image' | 'video', url: post.mediaUrl });
+    }
+    return arr;
+  }, [post.media, post.mediaUrl, post.mediaType]);
+  const activeMedia = mediaList[mediaIdx] ?? null;
+  const canDelete = store.authed && post.authorId === store.db.meId;
 
   useEffect(() => {
     setLiked(post.iLiked);
@@ -155,15 +180,32 @@ export function PostLightbox({ post, onClose }: { post: FeedPost; onClose: () =>
         <div className="grid md:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)] gap-0 md:max-h-[85vh]">
         {/* media */}
         <div className="relative bg-black rounded-t-2xl md:rounded-t-none md:rounded-l-2xl overflow-hidden flex items-center justify-center min-h-[280px] md:min-h-[520px]">
-          {post.mediaType === 'video' ? (
-            <R2Video mediaKey={post.mediaUrl} controls autoPlay className="w-full h-full max-h-[85vh] object-contain" />
+          {activeMedia == null ? (
+            <div className="p-10 text-center text-white/80 max-w-md">
+              <Icon name="spark" size={22} className="text-[var(--brand)] mx-auto mb-3" />
+              <p className="text-sm whitespace-pre-wrap">{post.note || 'Day post'}</p>
+            </div>
+          ) : activeMedia.mediaType === 'video' ? (
+            <R2Video mediaKey={activeMedia.url} controls autoPlay className="w-full h-full max-h-[85vh] object-contain" />
           ) : (
-            <R2Image mediaKey={post.mediaUrl} alt={post.note || post.challengeTitle} className="w-full h-full max-h-[85vh] object-contain" />
+            <R2Image mediaKey={activeMedia.url} alt={post.note || post.challengeTitle} className="w-full h-full max-h-[85vh] object-contain" />
           )}
           <span className="absolute top-3 left-3 px-3 py-1 rounded-full bg-black/70 backdrop-blur text-white text-[12px] font-bold display flex items-center gap-1.5">
             <Icon name="calendar" size={12} className="text-[var(--brand)]" /> DAY {post.dayNumber}
             <span className="text-white/50 font-sans font-medium">/ {post.durationDays}</span>
           </span>
+          {mediaList.length > 1 && (
+            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-black/70 backdrop-blur rounded-full px-2.5 py-1.5">
+              {mediaList.map((m, i) => (
+                <button
+                  key={i}
+                  onClick={() => setMediaIdx(i)}
+                  className={`w-2 h-2 rounded-full transition-colors ${i === mediaIdx ? 'bg-[var(--brand)]' : 'bg-white/40'}`}
+                  aria-label={`Media ${i + 1} of ${mediaList.length}: ${m.mediaType}`}
+                />
+              ))}
+            </div>
+          )}
         </div>
 
         {/* side panel */}
@@ -244,6 +286,26 @@ export function PostLightbox({ post, onClose }: { post: FeedPost; onClose: () =>
                 <Icon name="comment" size={17} />
                 {compactCount(comments?.length ?? post.commentCount)}
               </span>
+              {canDelete && (
+                <button
+                  onClick={() => {
+                    if (busyDelete) return;
+                    if (!window.confirm('Delete this post and its media? This cannot be undone.')) return;
+                    setBusyDelete(true);
+                    store
+                      .deletePost(post.id)
+                      .then((ok) => {
+                        if (ok) onClose();
+                      })
+                      .finally(() => setBusyDelete(false));
+                  }}
+                  disabled={busyDelete}
+                  className="ml-auto flex items-center gap-1.5 text-[12px] font-bold text-red-400/80 hover:text-red-400 transition-colors disabled:opacity-50"
+                  title="Delete post"
+                >
+                  {busyDelete ? <Spinner size={14} /> : <Icon name="trash" size={15} />} Delete
+                </button>
+              )}
             </div>
             {store.authed ? (
               <div className="flex items-center gap-2">

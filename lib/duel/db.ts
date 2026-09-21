@@ -1,9 +1,9 @@
 import type { AppNotification, Settings, Thread, UserProfile } from '@/lib/types';
 import type { ActivityAction } from '@/lib/types';
-import type { Category, Challenge, ChallengeComment, Checkin, Participation, PostComment } from './types';
+import type { Category, Challenge, ChallengeComment, ChallengePost, ChallengePostMedia, Checkin, Participation, PostComment } from './types';
 
 export interface PostLikeRow {
-  checkinId: string;
+  postId: string;
   userId: string;
   createdAt: string;
 }
@@ -51,6 +51,11 @@ export interface DuelDB {
   categories: Category[];
   challenges: Challenge[];
   participants: Participation[];
+  /** daily posts — the single source of truth for entries (challenge_posts) */
+  posts: ChallengePost[];
+  /** media attached to daily posts (challenge_post_media) */
+  postMedia: ChallengePostMedia[];
+  /** derived per-day progress ledger (challenge_checkins) */
   checkins: Checkin[];
   comments: ChallengeComment[];
   likes: LinkRow[];
@@ -75,6 +80,8 @@ export function emptyDB(): DuelDB {
     categories: [],
     challenges: [],
     participants: [],
+    posts: [],
+    postMedia: [],
     checkins: [],
     comments: [],
     likes: [],

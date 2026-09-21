@@ -7,16 +7,8 @@ export async function GET(request: Request) {
   const next = requestUrl.searchParams.get('next') ?? '/feed'
   const origin = requestUrl.origin
 
-  console.log('[Auth Callback] Received request:', {
-    hasCode: !!code,
-    next,
-    origin,
-  })
-
   if (code) {
     const supabase = await createClient()
-    
-    console.log('[Auth Callback] Attempting to exchange code for session...')
     const { data, error } = await supabase.auth.exchangeCodeForSession(code)
     
     if (error) {
@@ -30,11 +22,6 @@ export async function GET(request: Request) {
     }
     
     if (data.session) {
-      console.log('[Auth Callback] Session created successfully:', {
-        userId: data.session.user.id,
-        email: data.session.user.email,
-      })
-      
       // Successfully exchanged code for session
       // Redirect to the next URL (which should be /auth/verified for email confirmations)
       return NextResponse.redirect(`${origin}${next}`)
