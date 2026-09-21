@@ -156,3 +156,74 @@ export const DURATION_BUCKET_LABEL: Record<DurationBucket, string> = {
   classic: '15–30 days',
   marathon: '30+ days',
 };
+
+// ============================================================================
+// CHALLENGE POSTS - Daily entries with media
+// ============================================================================
+
+/** Daily entry/post inside a challenge */
+export interface ChallengePost {
+  id: string;
+  challengeId: string;
+  userId: string;
+  dayNumber: number;
+  caption: string;
+  likeCount: number;
+  commentCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Media file attached to a challenge post */
+export interface ChallengePostMedia {
+  id: string;
+  postId: string;
+  mediaType: 'image' | 'video';
+  url: string;
+  thumbnailUrl: string | null;
+  width: number | null;
+  height: number | null;
+  durationMs: number | null;
+  fileSize: number | null;
+  sortOrder: number;
+  createdAt: string;
+}
+
+/** Challenge post enriched with user info and media for display */
+export interface ChallengePostView extends ChallengePost {
+  username: string;
+  displayName: string;
+  avatarUrl: string | null;
+  media: ChallengePostMedia[];
+  challengeTitle?: string;
+  liked?: boolean;
+}
+
+export interface ChallengePostLike {
+  postId: string;
+  userId: string;
+  createdAt: string;
+}
+
+export interface ChallengePostComment {
+  id: string;
+  postId: string;
+  userId: string;
+  body: string;
+  createdAt: string;
+}
+
+export interface CreatePostInput {
+  challengeId: string;
+  dayNumber: number;
+  caption: string;
+  media: {
+    type: 'image' | 'video';
+    url: string;
+    thumbnailUrl?: string;
+    width?: number;
+    height?: number;
+    durationMs?: number;
+    fileSize?: number;
+  }[];
+}

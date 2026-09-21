@@ -173,14 +173,58 @@ create trigger trg_keywords_activities after insert on public.activities
   for each row execute function public.duel_fn_keyword_behaviour();
 
 /** Searches that never became an activity row (e.g. untracked clients). */
+create or replace function public.duel_fn_keyword_search()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.user_id is null or coalesce(new.query, '') = '' then
+    return new;
+  end if;
+
+  perform public.duel_bump_keywords(
+    new.user_id,
+    new.query,
+    null,
+    2.5
+  );
+
+  return new;
+end;
+$$;
+
 drop trigger if exists trg_keywords_searches on public.searches;
 create trigger trg_keywords_searches after insert on public.searches
-  for each row execute function public.duel_bump_keywords(new.user_id, new.query, null, 2.5);
+  for each row execute function public.duel_fn_keyword_search();
 
 /** A user's own posts also signal interest in what they're documenting. */
+create or replace function public.duel_fn_keyword_checkin()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.user_id is null then
+    return new;
+  end if;
+
+  perform public.duel_bump_keywords(
+    new.user_id,
+    new.note,
+    null,
+    2.0
+  );
+
+  return new;
+end;
+$$;
+
 drop trigger if exists trg_keywords_checkins on public.challenge_checkins;
 create trigger trg_keywords_checkins after insert on public.challenge_checkins
-  for each row execute function public.duel_bump_keywords(new.user_id, new.note, null, 2.0);
+  for each row execute function public.duel_fn_keyword_checkin();
 
 -- ----------------------------------------------------------------------------
 -- 2. POST-LEVEL SOCIAL (likes + comments on challenge_checkins)
@@ -205,6 +249,23 @@ create index if not exists idx_checkin_likes_checkin on public.checkin_likes (ch
 create index if not exists idx_checkin_likes_user    on public.checkin_likes (user_id);
 create index if not exists idx_checkin_comments_ck   on public.checkin_comments (checkin_id, created_at);
 create index if not exists idx_checkin_comments_user on public.checkin_comments (user_id);
+
+-- challenge_checkins in this database originally has no media columns.
+-- Add them because the Duel feed supports image/video posts.
+alter table public.challenge_checkins
+  add column if not exists media_url text;
+
+alter table public.challenge_checkins
+  add column if not exists media_type text;
+
+-- Keep media_type nullable for existing text-only check-ins.
+-- New media posts should use 'image' or 'video'.
+alter table public.challenge_checkins
+  drop constraint if exists challenge_checkins_media_type_check;
+
+alter table public.challenge_checkins
+  add constraint challenge_checkins_media_type_check
+  check (media_type is null or media_type in ('image', 'video'));
 
 alter table public.challenge_checkins add column if not exists like_count    int not null default 0;
 alter table public.challenge_checkins add column if not exists comment_count int not null default 0;
@@ -365,11 +426,19 @@ language sql stable security definer set search_path = public as $$
               from public.user_keywords uk
              where uk.user_id = v.id
                and uk.keyword = any (
-                     array_remove(array_cat(
-                       public.duel_tokenize(cd.note),
-                       public.duel_tokenize(cd.challenge_title),
-                       (select array_agg(lower(t)) from unnest(cd.tags) t)
-                     ), null)
+                     array_remove(
+                       array_cat(
+                         array_cat(
+                           public.duel_tokenize(cd.note),
+                           public.duel_tokenize(cd.challenge_title)
+                         ),
+                         coalesce(
+                           (select array_agg(lower(t)) from unnest(coalesce(cd.tags, array[]::text[])) t),
+                           array[]::text[]
+                         )
+                       ),
+                       null
+                     )
                    )
            ) as kw_raw,
            /* creator affinity: logged interactions with this author */
@@ -492,11 +561,19 @@ begin
         left join public.user_keywords uk
           on uk.user_id = p_user
          and uk.keyword = any (
-               array_remove(array_cat(
-                 public.duel_tokenize(c.title),
-                 public.duel_tokenize(c.description),
-                 (select array_agg(lower(t)) from unnest(c.tags) t)
-               ), null)
+               array_remove(
+                 array_cat(
+                   array_cat(
+                     public.duel_tokenize(c.title),
+                     public.duel_tokenize(c.description)
+                   ),
+                   coalesce(
+                     (select array_agg(lower(t)) from unnest(coalesce(c.tags, array[]::text[])) t),
+                     array[]::text[]
+                   )
+                 ),
+                 null
+               )
              )
        where c.status = 'open'
        group by c.id
@@ -537,11 +614,19 @@ begin
         from public.user_keywords uk2
        where uk2.user_id = p_user
          and uk2.keyword = any (
-               array_remove(array_cat(
-                 public.duel_tokenize(c.title),
-                 public.duel_tokenize(c.description),
-                 (select array_agg(lower(t)) from unnest(c.tags) t)
-               ), null)
+               array_remove(
+                 array_cat(
+                   array_cat(
+                     public.duel_tokenize(c.title),
+                     public.duel_tokenize(c.description)
+                   ),
+                   coalesce(
+                     (select array_agg(lower(t)) from unnest(coalesce(c.tags, array[]::text[])) t),
+                     array[]::text[]
+                   )
+                 ),
+                 null
+               )
              )
     ) kw on true
     left join lateral (
@@ -549,11 +634,19 @@ begin
         from public.user_keywords uk3
        where uk3.user_id = p_user
          and uk3.keyword = any (
-               array_remove(array_cat(
-                 public.duel_tokenize(c.title),
-                 public.duel_tokenize(c.description),
-                 (select array_agg(lower(t)) from unnest(c.tags) t)
-               ), null)
+               array_remove(
+                 array_cat(
+                   array_cat(
+                     public.duel_tokenize(c.title),
+                     public.duel_tokenize(c.description)
+                   ),
+                   coalesce(
+                     (select array_agg(lower(t)) from unnest(coalesce(c.tags, array[]::text[])) t),
+                     array[]::text[]
+                   )
+                 ),
+                 null
+               )
              )
        order by uk3.weight desc
        limit 1
