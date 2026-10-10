@@ -1,33 +1,20 @@
-# dependencies
-/node_modules
-/.pnp
-.pnp.js
-
-# testing
-/coverage
-
-# next.js
-/.next/
-/out/
-
-# production
-/build
-
-# misc
-.DS_Store
-*.pem
-
-# debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# local env files
-.env*.local
-
-# vercel
-.vercel
-
-# typescript
+node_modules/
+.next/
+out/
+build/
 *.tsbuildinfo
 next-env.d.ts
+.env*.local
+.env
+.DS_Store
+npm-debug.log*
+
+# secrets
+.env.*
+!.env.example
+*.pem
+
+# personal documents and design sources (never commit)
+*.docx
+*.pdf
+/Glossy Blue and Red RUHIZ Logo.png
