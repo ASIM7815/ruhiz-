@@ -4,44 +4,106 @@ import { useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, ImageOff } from "lucide-react";
 import type { MediaItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { VideoPlayer } from "./VideoPlayer";
+import { MEDIA_MAX_VH, VideoPlayer } from "./VideoPlayer";
 
-function Img({ m }: { m: MediaItem }) {
+/*
+ * Full-media display for the feed and post pages.
+ *
+ * Rule: show the entire file at its own aspect ratio. Nothing here uses `object-cover`.
+ * Cropped square thumbnails (profile grids, Explore rows, the composer's chips) are separate on
+ * purpose and always link through to this full view.
+ */
+
+const ratioOf = (m: Pick<MediaItem, "width" | "height">) => (m.width && m.height ? m.width / m.height : null);
+
+/** One image shown whole. Its box takes the image's own ratio, capped to 80% of the viewport height. */
+function FullImage({ m, className }: { m: MediaItem; className?: string }) {
+  const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
   const [failed, setFailed] = useState(false);
+  const w = m.width ?? natural?.w ?? null;
+  const h = m.height ?? natural?.h ?? null;
+  const r = w && h ? w / h : null;
+
   if (failed)
     return (
-      <div className="grid size-full place-items-center bg-elev text-faint">
+      <div className={cn("grid aspect-[4/3] place-items-center rounded-xl bg-elev text-faint ring-1 ring-white/10", className)}>
         <span className="flex flex-col items-center gap-2 text-[0.8rem]">
           <ImageOff className="size-6" /> Image unavailable
         </span>
       </div>
     );
-  // eslint-disable-next-line @next/next/no-img-element
-  return <img src={m.url} alt={m.alt || "Photo"} loading="lazy" draggable={false} onError={() => setFailed(true)} className="size-full select-none object-cover" />;
+
+  return (
+    <div
+      className={cn("feed-media mx-auto w-full overflow-hidden rounded-xl bg-[#050816] ring-1 ring-white/10", className)}
+      // Without a known size, hold a neutral 4:3 slot until the image loads, then switch to its real ratio.
+      style={r && w ? { maxWidth: `min(${w}px, calc(${MEDIA_MAX_VH}vh * ${r}))` } : { aspectRatio: "4 / 3" }}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={m.url}
+        alt={m.alt || "Photo"}
+        width={w ?? undefined}
+        height={h ?? undefined}
+        loading="lazy"
+        decoding="async"
+        draggable={false}
+        onLoad={(e) => !m.width && setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+        onError={() => setFailed(true)}
+        className="feed-media-image"
+        style={r ? { aspectRatio: `${r}` } : undefined}
+      />
+    </div>
+  );
 }
 
-/** Photo / video media with a multi-item carousel (arrows, dots, swipe, keyboard). */
+/** Slide inside the carousel stage: media is contained, never cropped. */
+function Slide({ m, active, onRatio }: { m: MediaItem; active: boolean; onRatio: (id: string, r: number) => void }) {
+  const [failed, setFailed] = useState(false);
+  if (m.type === "video") return <VideoPlayer media={m} fill onRatio={(r) => onRatio(m.id, r)} className="!rounded-none !ring-0" />;
+  if (failed)
+    return (
+      <div className="absolute inset-0 grid place-items-center bg-elev text-faint">
+        <span className="flex flex-col items-center gap-2 text-[0.8rem]">
+          <ImageOff className="size-6" /> Image unavailable
+        </span>
+      </div>
+    );
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={m.url}
+      alt={m.alt || "Photo"}
+      loading={active ? "eager" : "lazy"}
+      decoding="async"
+      draggable={false}
+      onLoad={(e) => !m.width && onRatio(m.id, e.currentTarget.naturalWidth / e.currentTarget.naturalHeight)}
+      onError={() => setFailed(true)}
+      className="absolute inset-0 size-full select-none object-contain object-center"
+    />
+  );
+}
+
+/** Photos and videos for a post: one item is shown whole; several become a swipeable carousel. */
 export function MediaCarousel({ media, className }: { media: MediaItem[]; className?: string }) {
   const [i, setI] = useState(0);
+  const [measured, setMeasured] = useState<Record<string, number>>({});
   const touch = useRef<number | null>(null);
   if (!media.length) return null;
 
   if (media.length === 1) {
     const m = media[0];
-    return m.type === "video" ? (
-      <VideoPlayer media={m} className={className} />
-    ) : (
-      <div className={cn("max-h-[560px] overflow-hidden rounded-xl bg-elev ring-1 ring-white/10", className)}>
-        <Img m={m} />
-      </div>
-    );
+    return m.type === "video" ? <VideoPlayer media={m} className={className} /> : <FullImage m={m} className={className} />;
   }
 
   const go = (n: number) => setI(Math.max(0, Math.min(media.length - 1, n)));
+  // The stage takes the shape of the slide on screen, so each item fills it exactly with no bars.
+  const stageRatio = ratioOf(media[i]) ?? measured[media[i].id] ?? 4 / 3;
 
   return (
     <div
-      className={cn("group relative overflow-hidden rounded-xl bg-elev ring-1 ring-white/10", className)}
+      className={cn("group relative w-full overflow-hidden rounded-xl bg-[#050816] ring-1 ring-white/10 transition-[aspect-ratio] duration-300", className)}
+      style={{ aspectRatio: `${stageRatio}`, maxHeight: `${MEDIA_MAX_VH}vh` }}
       role="region"
       aria-roledescription="carousel"
       aria-label={`Media, ${i + 1} of ${media.length}`}
@@ -58,10 +120,10 @@ export function MediaCarousel({ media, className }: { media: MediaItem[]; classN
         touch.current = null;
       }}
     >
-      <div className="flex transition-transform duration-500 ease-[cubic-bezier(.2,.8,.2,1)]" style={{ transform: `translateX(-${i * 100}%)` }}>
+      <div className="absolute inset-0 flex transition-transform duration-500 ease-[cubic-bezier(.2,.8,.2,1)]" style={{ transform: `translateX(-${i * 100}%)` }}>
         {media.map((m, idx) => (
-          <div key={m.id} className="aspect-[16/9] w-full shrink-0" aria-hidden={idx !== i}>
-            {m.type === "video" ? <VideoPlayer media={m} className="!rounded-none !ring-0" /> : <Img m={m} />}
+          <div key={m.id} className="relative h-full w-full shrink-0" aria-hidden={idx !== i}>
+            <Slide m={m} active={Math.abs(idx - i) <= 1} onRatio={(id, r) => setMeasured((s) => (s[id] === r ? s : { ...s, [id]: r }))} />
           </div>
         ))}
       </div>

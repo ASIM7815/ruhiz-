@@ -137,5 +137,8 @@ export const presign = z
     mime: z.string().trim().toLowerCase().max(60),
     size: z.number().int().positive(),
     alt: z.string().trim().max(200).optional().default(""),
+    // Display hints measured by the browser; used only for layout, never for authorisation.
+    width: z.number().int().min(1).max(20000).optional(),
+    height: z.number().int().min(1).max(20000).optional(),
   })
   .strict();

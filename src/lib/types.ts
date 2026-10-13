@@ -90,6 +90,9 @@ export interface MediaItem {
   type: "image" | "video";
   url: string;
   alt: string;
+  /** Intrinsic pixel size, when known (null for files uploaded before sizes were recorded). */
+  width: number | null;
+  height: number | null;
 }
 
 export interface LifecycleUpdate {
