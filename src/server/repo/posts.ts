@@ -30,8 +30,8 @@ const POST_SELECT = `
 export async function getPostsByIds(viewer: Viewer, ids: string[]): Promise<Post[]> {
   if (!ids.length) return [];
   const rows = await q(`${POST_SELECT} where p.id = any($2::uuid[])`, [viewer.id, ids]);
-  const media = await q<{ id: string; post_id: string; kind: "image" | "video"; alt: string }>(
-    `select id, post_id, kind, alt from media where post_id = any($1::uuid[]) and status = 'ready' order by position, created_at`,
+  const media = await q<{ id: string; post_id: string; kind: "image" | "video"; alt: string; width: number | null; height: number | null }>(
+    `select id, post_id, kind, alt, width, height from media where post_id = any($1::uuid[]) and status = 'ready' order by position, created_at`,
     [ids],
   );
   const helpers = await q<{ post_id: string; people: { code: string; avatar: string | null }[] }>(
@@ -42,7 +42,7 @@ export async function getPostsByIds(viewer: Viewer, ids: string[]): Promise<Post
     [ids],
   );
   const byPost = new Map<string, Post["media"]>();
-  for (const m of media) byPost.set(m.post_id, [...(byPost.get(m.post_id) ?? []), { id: m.id, type: m.kind, url: `/api/media/${m.id}`, alt: m.alt }]);
+  for (const m of media) byPost.set(m.post_id, [...(byPost.get(m.post_id) ?? []), { id: m.id, type: m.kind, url: `/api/media/${m.id}`, alt: m.alt, width: m.width, height: m.height }]);
   const helperMap = new Map(
     helpers.map((h) => [h.post_id, h.people.slice(0, 4).map((p) => ({ code: p.code.trim(), avatarUrl: p.avatar ? `/api/media/${p.avatar}` : null }))]),
   );

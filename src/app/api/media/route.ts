@@ -25,8 +25,8 @@ export const POST = route({ rateLimit: { key: "upload", limit: 60, windowSec: 36
   const key = `u/${viewer.id}/${p.purpose}/${now.getUTCFullYear()}/${String(now.getUTCMonth() + 1).padStart(2, "0")}/${randomUUID()}.${EXT[p.mime]}`;
   const bucket = bucketFor(p.kind);
   const [row] = await q<{ id: string }>(
-    `insert into media (owner_id, purpose, kind, bucket, object_key, mime, size_bytes, alt) values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
-    [viewer.id, p.purpose, p.kind, bucket, key, p.mime, p.size, p.alt],
+    `insert into media (owner_id, purpose, kind, bucket, object_key, mime, size_bytes, alt, width, height) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning id`,
+    [viewer.id, p.purpose, p.kind, bucket, key, p.mime, p.size, p.alt, p.width && p.height ? p.width : null, p.width && p.height ? p.height : null],
   );
   const uploadUrl = await presignPut(bucket, key, p.mime, p.size);
   return { id: row.id, uploadUrl, headers: { "Content-Type": p.mime } };

@@ -240,6 +240,32 @@ html[data-motion="reduce"] *, html[data-motion="reduce"] *::before, html[data-mo
 .kenburns { animation: kenburns 14s ease-in-out infinite alternate; }
 .skeleton { background: linear-gradient(90deg, rgba(255,255,255,.03), rgba(255,255,255,.08), rgba(255,255,255,.03)); background-size: 200% 100%; animation: shimmer 1.4s infinite; }
 
+/* ───────── Feed media: always the whole file, never cropped or stretched ───────── */
+.feed-media-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 80vh;
+  object-fit: contain;
+  object-position: center;
+}
+.feed-media-video {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+  background: #050816;
+}
+.feed-media-player:fullscreen {
+  aspect-ratio: auto !important;
+  max-width: none !important;
+  max-height: none !important;
+  border-radius: 0;
+}
+
 .no-scrollbar { scrollbar-width: none; }
 .no-scrollbar::-webkit-scrollbar { display: none; }
 

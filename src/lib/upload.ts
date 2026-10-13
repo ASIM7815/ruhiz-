@@ -17,6 +17,33 @@ export function checkFile(file: File, kind: keyof typeof UPLOAD_LIMITS) {
 }
 
 /**
+ * Reads a file's intrinsic pixel size in the browser (display orientation, so a phone video shot
+ * in portrait reports portrait). Returns null if it can't be read in a few seconds; the feed then
+ * falls back to measuring the file when it loads. The file itself is never modified.
+ */
+export function measureMedia(file: Blob, kind: "image" | "video"): Promise<{ width: number; height: number } | null> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const el = kind === "image" ? new Image() : document.createElement("video");
+    const done = (v: { width: number; height: number } | null) => {
+      window.clearTimeout(timer);
+      URL.revokeObjectURL(url);
+      resolve(v);
+    };
+    const timer = window.setTimeout(() => done(null), 5000);
+    if (el instanceof HTMLVideoElement) {
+      el.preload = "metadata";
+      el.muted = true;
+      el.onloadedmetadata = () => done(el.videoWidth && el.videoHeight ? { width: el.videoWidth, height: el.videoHeight } : null);
+    } else {
+      el.onload = () => done(el.naturalWidth && el.naturalHeight ? { width: el.naturalWidth, height: el.naturalHeight } : null);
+    }
+    el.onerror = () => done(null);
+    el.src = url;
+  });
+}
+
+/**
  * Upload flow: ask our server for a presigned URL → PUT directly to Neon Object Storage
  * (with progress) → ask our server to verify the object. Returns the media id.
  */
@@ -24,8 +51,9 @@ export async function uploadFile(
   file: Blob & { name?: string },
   opts: { purpose: "post" | "avatar"; kind: "image" | "video"; alt?: string; onProgress?: (pct: number) => void; signal?: AbortSignal },
 ) {
+  const dims = await measureMedia(file, opts.kind);
   const { id, uploadUrl, headers } = await api<{ id: string; uploadUrl: string; headers: Record<string, string> }>("/api/media", {
-    body: { purpose: opts.purpose, kind: opts.kind, mime: file.type, size: file.size, alt: opts.alt ?? "" },
+    body: { purpose: opts.purpose, kind: opts.kind, mime: file.type, size: file.size, alt: opts.alt ?? "", ...(dims ?? {}) },
   });
 
   await new Promise<void>((resolve, reject) => {

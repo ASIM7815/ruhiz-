@@ -5,8 +5,26 @@ import { Maximize, Pause, Play, VideoOff, Volume2, VolumeX } from "lucide-react"
 import type { MediaItem } from "@/lib/types";
 import { cn, formatDuration } from "@/lib/utils";
 
-/** Native video player with custom controls. Streams from storage via a short-lived signed URL. */
-export function VideoPlayer({ media, className }: { media: Pick<MediaItem, "url" | "alt">; className?: string }) {
+/** Tallest a feed video may be, as a share of the viewport height. */
+export const MEDIA_MAX_VH = 80;
+
+interface Props {
+  media: Pick<MediaItem, "url" | "alt" | "width" | "height">;
+  className?: string;
+  /** Fill a parent that already has the right shape (used inside the carousel stage). */
+  fill?: boolean;
+  /** Reports the real width/height ratio once known, so a parent can match its shape. */
+  onRatio?: (ratio: number) => void;
+}
+
+/**
+ * Native video player with custom controls.
+ *
+ * Sizing: the player box takes the video's own aspect ratio (from stored dimensions, then from the
+ * file's metadata once it loads), so the whole frame is visible with no letterbox bars and no
+ * cropping. The <video> element itself is always `object-fit: contain` as a second safeguard.
+ */
+export function VideoPlayer({ media, className, fill, onRatio }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const vid = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
@@ -15,6 +33,7 @@ export function VideoPlayer({ media, className }: { media: Pick<MediaItem, "url"
   const [t, setT] = useState(0);
   const [dur, setDur] = useState(0);
   const [failed, setFailed] = useState(false);
+  const [ratio, setRatio] = useState<number | null>(media.width && media.height ? media.width / media.height : null);
 
   const toggle = () => {
     const v = vid.current;
@@ -34,7 +53,7 @@ export function VideoPlayer({ media, className }: { media: Pick<MediaItem, "url"
 
   if (failed)
     return (
-      <div className={cn("grid aspect-video place-items-center rounded-xl bg-elev text-faint ring-1 ring-white/10", className)}>
+      <div className={cn("grid place-items-center rounded-xl bg-elev text-faint ring-1 ring-white/10", fill ? "absolute inset-0" : "aspect-video", className)}>
         <span className="flex flex-col items-center gap-2 text-[0.82rem]">
           <VideoOff className="size-6" /> This video couldn't be played.
         </span>
@@ -42,11 +61,13 @@ export function VideoPlayer({ media, className }: { media: Pick<MediaItem, "url"
     );
 
   const pct = dur ? (t / dur) * 100 : 0;
+  const r = ratio ?? 16 / 9;
 
   return (
     <div
       ref={box}
-      className={cn("group relative aspect-video overflow-hidden rounded-xl bg-black ring-1 ring-white/10", className)}
+      className={cn("feed-media-player group relative overflow-hidden bg-[#050816]", fill ? "absolute inset-0" : "mx-auto w-full rounded-xl ring-1 ring-white/10", className)}
+      style={fill ? undefined : { aspectRatio: `${r}`, maxWidth: `calc(${MEDIA_MAX_VH}vh * ${r})`, maxHeight: `${MEDIA_MAX_VH}vh` }}
       onClick={toggle}
       role="button"
       tabIndex={0}
@@ -64,12 +85,20 @@ export function VideoPlayer({ media, className }: { media: Pick<MediaItem, "url"
         muted={muted}
         playsInline
         preload="metadata"
-        className="size-full object-contain"
+        className="feed-media-video"
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         onEnded={() => setPlaying(false)}
         onTimeUpdate={(e) => setT(e.currentTarget.currentTime)}
-        onLoadedMetadata={(e) => Number.isFinite(e.currentTarget.duration) && setDur(e.currentTarget.duration)}
+        onLoadedMetadata={(e) => {
+          const v = e.currentTarget;
+          if (Number.isFinite(v.duration)) setDur(v.duration);
+          if (v.videoWidth && v.videoHeight) {
+            const next = v.videoWidth / v.videoHeight;
+            setRatio(next);
+            onRatio?.(next);
+          }
+        }}
         onError={() => setFailed(true)}
       />
 
