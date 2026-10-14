@@ -43,7 +43,7 @@ export const env = {
       return process.env.NEON_STORAGE_IMAGES_BUCKET || "images";
     },
     get videoBucket() {
-      return process.env.NEON_STORAGE_VIDEO_BUCKET || "video";
+      return process.env.NEON_STORAGE_VIDEO_BUCKET || "videos";
     },
     get configured() {
       return Boolean(this.endpoint && this.accessKeyId && this.secretAccessKey);

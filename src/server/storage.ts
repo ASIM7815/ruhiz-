@@ -1,5 +1,16 @@
 import "server-only";
-import { DeleteObjectsCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
+  CreateMultipartUploadCommand,
+  DeleteObjectsCommand,
+  GetObjectCommand,
+  HeadBucketCommand,
+  HeadObjectCommand,
+  PutObjectCommand,
+  S3Client,
+  UploadPartCommand,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { env } from "./env";
 import { q } from "./db";
@@ -26,11 +37,36 @@ export const storageConfigured = () => env.storage.configured;
 
 export const bucketFor = (kind: "image" | "video") => (kind === "image" ? env.storage.imagesBucket : env.storage.videoBucket);
 
+const MB = 1024 * 1024;
+/** Upload rules. Keep in sync with UPLOAD_LIMITS in src/lib/upload.ts (the client pre-check). */
 export const MEDIA_RULES = {
-  image: { maxBytes: 10 * 1024 * 1024, mimes: ["image/jpeg", "image/png", "image/webp", "image/gif"] },
-  video: { maxBytes: 200 * 1024 * 1024, mimes: ["video/mp4", "video/webm", "video/quicktime"] },
-  avatar: { maxBytes: 5 * 1024 * 1024, mimes: ["image/jpeg", "image/png", "image/webp"] },
+  image: { maxBytes: 10 * MB, mimes: ["image/jpeg", "image/png", "image/webp", "image/gif"] },
+  // 1 GB per video. Neon Object Storage currently allows objects up to 5 GiB.
+  video: { maxBytes: 1024 * MB, mimes: ["video/mp4", "video/webm", "video/quicktime"] },
+  avatar: { maxBytes: 5 * MB, mimes: ["image/jpeg", "image/png", "image/webp"] },
+  banner: { maxBytes: 8 * MB, mimes: ["image/jpeg", "image/png", "image/webp"] },
 } as const;
+
+/** Videos above this size go up in parts (each retried on its own); smaller files use one PUT. */
+export const MULTIPART_THRESHOLD = 16 * MB;
+export const PART_SIZE = 16 * MB;
+/** Per-user cap on video bytes started in 24 hours (abuse / cost protection). */
+export const DAILY_VIDEO_BYTES = 5 * 1024 * MB;
+
+/** Neon Storage reports a missing bucket as a 403 preflight, which browsers show as a "CORS error". */
+const bucketOk = new Map<string, number>();
+export async function ensureBucket(bucket: string) {
+  const ok = bucketOk.get(bucket);
+  if (ok && Date.now() - ok < 10 * 60_000) return;
+  try {
+    await client().send(new HeadBucketCommand({ Bucket: bucket }));
+    bucketOk.set(bucket, Date.now());
+  } catch (e) {
+    const status = (e as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
+    console.error(`[storage] bucket "${bucket}" is not reachable (${status ?? (e as Error).name}). Check NEON_STORAGE_*_BUCKET.`);
+    throw new Error("bucket-unavailable");
+  }
+}
 
 export const EXT: Record<string, string> = {
   "image/jpeg": "jpg",
@@ -46,6 +82,38 @@ export const EXT: Record<string, string> = {
 export async function presignPut(bucket: string, key: string, mime: string, size: number) {
   const cmd = new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: mime, ContentLength: size });
   return getSignedUrl(client(), cmd, { expiresIn: 600, signableHeaders: new Set(["content-type", "content-length"]) });
+}
+
+export async function createMultipart(bucket: string, key: string, mime: string) {
+  const r = await client().send(new CreateMultipartUploadCommand({ Bucket: bucket, Key: key, ContentType: mime }));
+  if (!r.UploadId) throw new Error("multipart-create-failed");
+  return r.UploadId;
+}
+
+/** Presigned URL for one part, bound to its exact byte length so the total size can't grow. */
+export async function presignPart(bucket: string, key: string, uploadId: string, partNumber: number, length: number) {
+  const cmd = new UploadPartCommand({ Bucket: bucket, Key: key, UploadId: uploadId, PartNumber: partNumber, ContentLength: length });
+  return getSignedUrl(client(), cmd, { expiresIn: 3600, signableHeaders: new Set(["content-length"]) });
+}
+
+export async function completeMultipart(bucket: string, key: string, uploadId: string, parts: { partNumber: number; etag: string }[]) {
+  await client().send(
+    new CompleteMultipartUploadCommand({
+      Bucket: bucket,
+      Key: key,
+      UploadId: uploadId,
+      MultipartUpload: { Parts: parts.map((p) => ({ PartNumber: p.partNumber, ETag: p.etag })) },
+    }),
+  );
+}
+
+export async function abortMultipart(bucket: string, key: string, uploadId: string) {
+  await client()
+    .send(new AbortMultipartUploadCommand({ Bucket: bucket, Key: key, UploadId: uploadId }))
+    .catch((e) => {
+      // Already completed/aborted uploads are fine to ignore.
+      if ((e as { name?: string }).name !== "NoSuchUpload") throw e;
+    });
 }
 
 export async function presignGet(bucket: string, key: string, expiresIn: number) {
@@ -109,4 +177,28 @@ export async function drainStorageQueue(limit = 200) {
     }
   }
   return { deleted, pending: false };
+}
+
+/**
+ * Removes uploads that were started but never finished (closed tab, lost connection): aborts the
+ * multipart upload so its parts stop using storage, queues any object for deletion, drops the row.
+ */
+export async function sweepAbandonedUploads(olderThanHours = 24, limit = 50) {
+  if (!storageConfigured()) return 0;
+  const rows = await q<{ id: string; bucket: string; object_key: string; upload_id: string | null }>(
+    `select id, bucket, object_key, upload_id from media
+      where status = 'pending' and created_at < now() - make_interval(hours => $1) order by created_at limit $2`,
+    [olderThanHours, limit],
+  );
+  for (const r of rows) {
+    try {
+      if (r.upload_id) await abortMultipart(r.bucket, r.object_key, r.upload_id);
+      await q(`insert into storage_gc (object_key, bucket, reason) values ($1, $2, 'abandoned upload') on conflict do nothing`, [r.object_key, r.bucket]);
+      await q(`delete from media where id = $1 and status = 'pending'`, [r.id]);
+    } catch (e) {
+      console.error("[storage] sweep failed for", r.id, (e as Error).message);
+    }
+  }
+  if (rows.length) await drainStorageQueue().catch(() => {});
+  return rows.length;
 }

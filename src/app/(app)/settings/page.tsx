@@ -13,6 +13,7 @@ import { Avatar } from "@/components/ui/Avatar";
 import { UserCode } from "@/components/ui/UserCode";
 import { Field, Segmented, Toggle } from "@/components/ui/Primitives";
 import { IdentityPicker } from "@/components/feed/IdentityPicker";
+import { IdentityStatusPanel } from "@/components/profile/IdentityReveal";
 
 const SECTIONS: { id: string; label: string; icon: LucideIcon }[] = [
   { id: "account", label: "Account", icon: UserRound },
@@ -42,42 +43,6 @@ function Section({ id, title, desc, children }: { id: string; title: string; des
       <p className="mt-0.5 text-[0.84rem] text-muted">{desc}</p>
       <div className="mt-3 divide-y divide-line">{children}</div>
     </section>
-  );
-}
-
-function RevealedFields() {
-  const me = useMe();
-  const { actions } = useStore();
-  const [name, setName] = useState(me.revealedName);
-  const [role, setRole] = useState(me.revealedRole);
-  const [busy, setBusy] = useState(false);
-  const dirty = name !== me.revealedName || role !== me.revealedRole;
-  const save = async () => {
-    setBusy(true);
-    try {
-      actions.setMe(await api<Me>("/api/me", { method: "PATCH", body: { revealedName: name.trim(), revealedRole: role.trim() } }));
-      actions.toast("Saved");
-    } catch (e) {
-      actions.toast((e as Error).message, "error");
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <div className="grid gap-3 py-3.5 sm:grid-cols-2">
-      <Field label="Name shown in Identity Revealer">
-        <input value={name} onChange={(e) => setName(e.target.value)} maxLength={60} className="input" />
-      </Field>
-      <Field label="Role / credential">
-        <input value={role} onChange={(e) => setRole(e.target.value)} maxLength={80} className="input" />
-      </Field>
-      <p className="text-[0.76rem] text-faint sm:col-span-1">Shown only on content you post as Identity Revealer. Never searchable.</p>
-      <div className="flex justify-end sm:col-span-1">
-        <button onClick={save} disabled={!dirty || busy} className="btn btn-blue btn-sm">
-          {busy ? <Loader2 className="size-4 animate-spin" /> : "Save"}
-        </button>
-      </div>
-    </div>
   );
 }
 
@@ -287,12 +252,12 @@ export default function SettingsPage() {
             </Row>
           </Section>
 
-          <Section id="identity" title="Identity & Privacy" desc="Choose how much of your real-world identity you share. You can change it for every post.">
+          <Section id="identity" title="Identity & Privacy" desc="Your identity is hidden by default. Reveal it only if you want to, and choose per post whether your name is shown.">
             <div className="py-3.5">
               <p className="mb-2 text-[0.9rem] font-semibold text-ink">Default identity for new posts</p>
               <IdentityPicker value={s.defaultIdentity} onChange={(v) => set({ defaultIdentity: v })} />
             </div>
-            <RevealedFields />
+            <IdentityStatusPanel />
             <Row title="Who can message you" desc="Applies to new conversations.">
               <select value={s.messagesFrom} onChange={(e) => set({ messagesFrom: e.target.value as Settings["messagesFrom"] })} className="input h-9 w-auto text-[0.84rem]">
                 <option value="everyone">Everyone</option>

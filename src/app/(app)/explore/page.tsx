@@ -1,94 +1,61 @@
 "use client";
 
-import { Suspense } from "react";
-import Link from "next/link";
+import { Suspense, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import useSWR from "swr";
-import { Check, ChevronRight, Clock, Flame, Lightbulb, MessagesSquare, RotateCcw, Users, X } from "lucide-react";
-import type { CategoryId, Post, Solution } from "@/lib/types";
+import useSWRInfinite from "swr/infinite";
+import { Check, Image as ImageIcon, LayoutGrid, Lightbulb, Loader2, PenLine, RotateCcw, Shuffle, Video, type LucideIcon } from "lucide-react";
+import type { CategoryId, ExplorePage, ExploreType } from "@/lib/types";
 import { CATEGORIES } from "@/lib/meta";
-import { cn, formatCount, timeAgo } from "@/lib/utils";
+import { cn, formatCount } from "@/lib/utils";
 import { useStore } from "@/store/store";
 import { PostCard, PostSkeleton } from "@/components/feed/PostCard";
-import { SolutionCard } from "@/components/solution/SolutionCard";
-import { CategoryPill, StatusPill } from "@/components/ui/Badges";
-import { Avatar } from "@/components/ui/Avatar";
-import { EmptyState, Tabs } from "@/components/ui/Primitives";
-import { LifecycleMini } from "@/components/problem/Lifecycle";
+import { EmptyState } from "@/components/ui/Primitives";
 
-type Tab = "trending" | "recent" | "solutions" | "discussions";
-interface ExploreData {
-  stats: { open_problems: number; solutions: number; help_offers: number; solved: number };
-  categories: { id: CategoryId; posts: number; open: number }[];
-  posts: Post[];
-  solutions: Solution[];
-  recentCounts: Record<string, number>;
-}
+const TYPES: { id: ExploreType; label: string; icon: LucideIcon; noun: string }[] = [
+  { id: "all", label: "All", icon: LayoutGrid, noun: "posts" },
+  { id: "video", label: "Videos", icon: Video, noun: "videos" },
+  { id: "photo", label: "Photos", icon: ImageIcon, noun: "photos" },
+  { id: "thought", label: "Thoughts", icon: PenLine, noun: "thoughts" },
+];
+const CATEGORY_IDS = Object.keys(CATEGORIES) as CategoryId[];
 
-const LOOP = ["Problem", "Experience", "Evidence", "Discussion", "Debate", "Solution", "Contribution", "Action", "Outcome"];
-
-function ProblemRow({ p, rank }: { p: Post; rank?: number }) {
-  const thumb = p.media.find((m) => m.type === "image");
-  return (
-    <Link href={`/post/${p.id}`} className="card card-hover group flex gap-4 p-4">
-      {rank !== undefined && <span className="font-display text-2xl font-extrabold text-faint group-hover:text-accent">{String(rank).padStart(2, "0")}</span>}
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <CategoryPill id={p.category} link={false} />
-          {p.status && <StatusPill status={p.status} />}
-          <span className="text-[0.74rem] text-faint">{timeAgo(p.createdAt)}</span>
-        </div>
-        <h3 className="section-title mt-2 text-[0.98rem] leading-snug group-hover:text-white">{p.title ?? p.text.slice(0, 90)}</h3>
-        <p className="mt-1 line-clamp-2 text-[0.84rem] text-muted">{p.text}</p>
-        {p.status && <LifecycleMini status={p.status} className="mt-3 max-w-xs" />}
-        <div className="mt-3 flex flex-wrap items-center gap-4 text-[0.76rem] text-muted">
-          <span className="inline-flex items-center gap-1.5">
-            <Avatar code={p.author.code} src={p.author.avatarUrl} size="xs" /> <span className="code-font">#{p.author.code}</span>
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <MessagesSquare className="size-3.5" /> {p.counts.discussions} contributions
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <Users className="size-3.5" /> {p.counts.helpers} offers of help
-          </span>
-          <span>{formatCount(p.counts.supports)} supports</span>
-        </div>
-      </div>
-      {thumb && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={thumb.url} alt="" className="hidden size-24 shrink-0 rounded-xl object-cover ring-1 ring-white/10 sm:block" loading="lazy" />
-      )}
-    </Link>
-  );
-}
+/** A fresh random seed per visit, so a refresh shows a different mix. */
+const newSeed = () => (crypto.getRandomValues(new Uint32Array(1))[0] >>> 0) || 1;
 
 function Explore() {
   const { actions } = useStore();
   const params = useSearchParams();
   const router = useRouter();
-  const category = params.get("category") as CategoryId | null;
-  const tab = ((params.get("tab") as Tab) || "trending") as Tab;
-  const { data, error, isLoading, mutate } = useSWR<ExploreData>(`/api/explore?tab=${tab}${category ? `&category=${category}` : ""}`);
+  const rawCat = params.get("category");
+  const category = rawCat && rawCat in CATEGORIES ? (rawCat as CategoryId) : null;
+  const rawType = params.get("type");
+  const type: ExploreType = TYPES.some((t) => t.id === rawType) ? (rawType as ExploreType) : "all";
+  const [seed, setSeed] = useState(newSeed);
+  const [removed, setRemoved] = useState<string[]>([]);
 
-  const setParam = (k: string, v: string | null) => {
+  const base = `/api/explore?type=${type}&seed=${seed}${category ? `&category=${category}` : ""}`;
+  const { data, error, isLoading, isValidating, size, setSize, mutate } = useSWRInfinite<ExplorePage>(
+    (i, prev: ExplorePage | null) => (i === 0 ? base : prev?.nextCursor ? `${base}&cursor=${encodeURIComponent(prev.nextCursor)}` : null),
+    { revalidateFirstPage: false, revalidateOnFocus: false },
+  );
+
+  const posts = useMemo(() => {
+    const seen = new Set<string>();
+    return (data ?? []).flatMap((p) => p.posts).filter((p) => !removed.includes(p.id) && !seen.has(p.id) && (seen.add(p.id), true));
+  }, [data, removed]);
+  const counts = data?.[0]?.categories;
+  const hasMore = Boolean(data?.[data.length - 1]?.nextCursor);
+  const loadingMore = isValidating && size > (data?.length ?? 0);
+  const typeMeta = TYPES.find((t) => t.id === type)!;
+
+  const setParam = (k: "category" | "type", v: string | null) => {
     const sp = new URLSearchParams(params.toString());
     if (v) sp.set(k, v);
     else sp.delete(k);
+    sp.delete("tab"); // old Explore tabs no longer exist
     router.replace(`/explore${sp.toString() ? `?${sp}` : ""}`, { scroll: false });
   };
-  const catCount = (id: CategoryId) => data?.categories.find((c) => c.id === id);
-  const empty = (
-    <EmptyState
-      icon={Lightbulb}
-      title={category ? `Nothing in ${CATEGORIES[category].label} yet` : "Nothing here yet"}
-      text="Problems, solutions and discussions appear here as members share them. Raise the first one."
-      action={
-        <button onClick={() => actions.openModal({ type: "composer", kind: "thought" })} className="btn btn-red">
-          Raise a problem
-        </button>
-      }
-    />
-  );
+  const total = (counts ?? []).reduce((a, c) => a + c.posts, 0);
 
   return (
     <div className="mx-auto max-w-[980px] space-y-5">
@@ -97,62 +64,69 @@ function Explore() {
         <div className="pointer-events-none absolute -bottom-32 left-10 size-72 rounded-full bg-accent/10 blur-3xl" />
         <div className="relative">
           <p className="eyebrow !text-brand-ink">Explore</p>
-          <h1 className="section-title mt-1.5 text-[1.6rem] leading-tight sm:text-[2rem]">Discover problems worth solving</h1>
-          <p className="mt-2 max-w-2xl text-[0.95rem] leading-relaxed text-ink-2">Every problem on RUHIZ moves through a journey. Find one you understand, bring what you know, and help it reach an outcome.</p>
-          <ol className="no-scrollbar mt-5 flex items-center gap-1 overflow-x-auto pb-1">
-            {LOOP.map((s, i) => (
-              <li key={s} className="flex shrink-0 items-center gap-1">
-                <span className={cn("rounded-md border px-2 py-1 text-[0.7rem] font-bold uppercase tracking-wider", i === 0 ? "border-accent/40 bg-accent/10 text-rose-200" : i === LOOP.length - 1 ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-200" : "border-line bg-black/20 text-ink-2")}>{s}</span>
-                {i < LOOP.length - 1 && <ChevronRight className="size-3.5 text-faint" />}
-              </li>
-            ))}
-          </ol>
-          {data && (
-            <div className="mt-5 flex flex-wrap gap-6 text-[0.84rem]">
-              <span>
-                <b className="text-lg text-ink">{data.stats.open_problems}</b> <span className="text-muted">open problems</span>
-              </span>
-              <span>
-                <b className="text-lg text-ink">{data.stats.solutions}</b> <span className="text-muted">Solution Cards</span>
-              </span>
-              <span>
-                <b className="text-lg text-ink">{data.stats.help_offers}</b> <span className="text-muted">offers of help</span>
-              </span>
-              <span>
-                <b className="text-lg text-emerald-300">{data.stats.solved}</b> <span className="text-muted">solved</span>
-              </span>
-            </div>
-          )}
+          <h1 className="section-title mt-1.5 text-[1.6rem] leading-tight sm:text-[2rem]">Discover by topic</h1>
+          <p className="mt-2 max-w-2xl text-[0.95rem] leading-relaxed text-ink-2">Pick a category, choose what you want to see, and get a fresh, random mix of what members have shared. Shuffle any time for something new.</p>
         </div>
       </section>
 
-      <section>
-        <div className="mb-3 flex items-center justify-between px-1">
-          <h2 className="section-title text-[1rem]">Categories</h2>
-          {category && (
-            <button onClick={() => setParam("category", null)} className="btn btn-ghost btn-sm">
-              <X className="size-3.5" /> Clear {CATEGORIES[category].label}
-            </button>
-          )}
+      <section aria-label="Content type" className="flex flex-wrap items-center gap-2">
+        <div role="tablist" aria-label="Content type" className="no-scrollbar flex max-w-full gap-1 overflow-x-auto rounded-xl border border-line bg-black/20 p-1">
+          {TYPES.map((t) => {
+            const on = t.id === type;
+            const Icon = t.icon;
+            return (
+              <button
+                key={t.id}
+                role="tab"
+                aria-selected={on}
+                onClick={() => setParam("type", t.id === "all" ? null : t.id)}
+                className={cn("flex shrink-0 items-center gap-1.5 rounded-lg px-3.5 py-2 text-[0.86rem] font-semibold transition-colors", on ? "bg-brand text-white shadow" : "text-ink-2 hover:bg-white/[.06] hover:text-ink")}
+              >
+                <Icon className="size-4" aria-hidden /> {t.label}
+              </button>
+            );
+          })}
         </div>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-          {(Object.keys(CATEGORIES) as CategoryId[]).map((id) => {
+        <button onClick={() => (setSeed(newSeed()), setRemoved([]))} className="btn btn-outline btn-sm ml-auto" aria-label="Shuffle results">
+          <Shuffle className="size-4" /> Shuffle
+        </button>
+      </section>
+
+      <section aria-label="Categories">
+        <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1 sm:grid sm:grid-cols-3 sm:overflow-visible lg:grid-cols-4">
+          <button
+            onClick={() => setParam("category", null)}
+            aria-pressed={!category}
+            className={cn("card card-hover flex shrink-0 items-center gap-3 p-3 text-left", !category && "!border-brand/60 !bg-brand/[.12]")}
+          >
+            <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-line bg-white/[.04]">
+              <LayoutGrid className="size-4.5" />
+            </span>
+            <span className="min-w-0">
+              <span className="flex items-center gap-1 text-[0.86rem] font-semibold text-ink">All categories {!category && <Check className="size-3.5 text-brand-ink" />}</span>
+              {counts && <span className="block text-[0.72rem] text-muted">{formatCount(total)} {typeMeta.noun}</span>}
+            </span>
+          </button>
+          {CATEGORY_IDS.map((id) => {
             const c = CATEGORIES[id];
             const Icon = c.icon;
             const on = category === id;
-            const n = catCount(id);
+            const n = counts?.find((x) => x.id === id)?.posts;
             return (
-              <button key={id} onClick={() => setParam("category", on ? null : id)} aria-pressed={on} className={cn("card card-hover flex items-start gap-3 p-3 text-left", on && "!border-brand/60 !bg-brand/[.12]")}>
+              <button
+                key={id}
+                onClick={() => setParam("category", on ? null : id)}
+                aria-pressed={on}
+                className={cn("card card-hover flex shrink-0 items-center gap-3 p-3 text-left", on && "!border-brand/60 !bg-brand/[.12]")}
+              >
                 <span className={cn("grid size-9 shrink-0 place-items-center rounded-lg border", c.tone.pill)}>
                   <Icon className="size-4.5" />
                 </span>
                 <span className="min-w-0">
-                  <span className="flex items-center gap-1 text-[0.86rem] font-semibold text-ink">
+                  <span className="flex items-center gap-1 whitespace-nowrap text-[0.86rem] font-semibold text-ink">
                     {c.label} {on && <Check className="size-3.5 text-brand-ink" />}
                   </span>
-                  <span className="block text-[0.72rem] text-muted">
-                    {n ? `${formatCount(n.posts)} ${n.posts === 1 ? "post" : "posts"}${n.open ? ` · ${n.open} open` : ""}` : c.blurb}
-                  </span>
+                  <span className="block whitespace-nowrap text-[0.72rem] text-muted">{n === undefined ? c.blurb : `${formatCount(n)} ${n === 1 ? typeMeta.noun.replace(/s$/, "") : typeMeta.noun}`}</span>
                 </span>
               </button>
             );
@@ -160,35 +134,44 @@ function Explore() {
         </div>
       </section>
 
-      <Tabs<Tab>
-        value={tab}
-        onChange={(t) => setParam("tab", t === "trending" ? null : t)}
-        tabs={[
-          { id: "trending", label: "Trending problems", icon: Flame },
-          { id: "recent", label: "Recent problems", icon: Clock },
-          { id: "solutions", label: "Popular solutions", icon: Lightbulb },
-          { id: "discussions", label: "Active discussions", icon: MessagesSquare },
-        ]}
-      />
-
-      <div className="space-y-3">
+      <div className="space-y-4" aria-live="polite" aria-busy={isLoading}>
+        <h2 className="section-title px-1 text-[1rem]">
+          {category ? CATEGORIES[category].label : "All categories"} · {typeMeta.label}
+        </h2>
         {isLoading ? (
-          <PostSkeleton />
-        ) : error ? (
-          <EmptyState icon={RotateCcw} title="Couldn't load" text={error.message} action={<button onClick={() => mutate()} className="btn btn-blue">Try again</button>} />
-        ) : tab === "solutions" ? (
-          data!.solutions.length ? data!.solutions.map((s) => <SolutionCard key={s.id} solution={s} />) : empty
-        ) : !data!.posts.length ? (
-          empty
-        ) : tab === "discussions" ? (
-          data!.posts.map((p) => (
-            <div key={p.id} className="relative">
-              <span className="badge absolute right-14 top-5 z-10 border-amber-400/30 bg-amber-500/10 text-amber-200">{data!.recentCounts[p.id]} new in 48h</span>
-              <PostCard post={p} />
-            </div>
-          ))
+          <>
+            <PostSkeleton />
+            <PostSkeleton />
+          </>
+        ) : error && !posts.length ? (
+          <EmptyState icon={RotateCcw} title="Couldn't load Explore" text={(error as Error).message} action={<button onClick={() => mutate()} className="btn btn-blue">Try again</button>} />
+        ) : !posts.length ? (
+          <EmptyState
+            icon={Lightbulb}
+            title={`No ${typeMeta.noun} ${category ? `in ${CATEGORIES[category].label}` : ""} yet`}
+            text="Nothing matches these filters yet. Try another category or content type, or share the first one."
+            action={
+              <button onClick={() => actions.openModal({ type: "composer", kind: type === "all" ? "thought" : type })} className="btn btn-red">
+                Create a post
+              </button>
+            }
+          />
         ) : (
-          data!.posts.map((p, i) => <ProblemRow key={p.id} p={p} rank={tab === "trending" ? i + 1 : undefined} />)
+          <>
+            {posts.map((p) => (
+              <PostCard key={p.id} post={p} onRemoved={(id) => setRemoved((r) => [...r, id])} />
+            ))}
+            {hasMore ? (
+              <div className="flex justify-center">
+                <button onClick={() => setSize(size + 1)} disabled={loadingMore} className="btn btn-outline">
+                  {loadingMore ? <Loader2 className="size-4 animate-spin" /> : null} {loadingMore ? "Loading…" : "Show more"}
+                </button>
+              </div>
+            ) : (
+              <p className="py-2 text-center text-[0.8rem] text-faint">You've seen everything here. Shuffle for a new order.</p>
+            )}
+            {error && <p className="text-center text-[0.8rem] text-rose-300">Couldn't load more: {(error as Error).message}</p>}
+          </>
         )}
       </div>
     </div>

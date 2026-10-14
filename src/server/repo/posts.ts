@@ -1,11 +1,13 @@
 import "server-only";
 import type { CategoryId, FeedTab, Post, SolutionStage } from "@/lib/types";
 import { q } from "../db";
-import { ms, msOrNull, toUser, userCols } from "../mappers";
+import { accountRevealed, ms, msOrNull, toUser, userCols } from "../mappers";
 import type { Viewer } from "../session";
 
 const POST_SELECT = `
-  select p.id, p.author_id, p.kind, p.intent, p.category_id, p.title, p.body, p.identity_mode, p.location,
+  select p.id, p.author_id, p.kind, p.intent, p.category_id, p.title, p.body, p.location,
+         -- Effective identity: a post shows as Revealer only while the account itself is revealed.
+         case when p.identity_mode = 'revealer' and ${accountRevealed("pr")} then 'revealer' else 'saver' end as identity_mode,
          p.status, p.outcome, p.addresses_post_id, ap.title as addresses_title, p.created_at, p.edited_at,
          ${userCols("pr", "a_", "p.identity_mode")},
          st.supports, st.cares, st.discussions, st.shares, st.help_offers,
@@ -35,8 +37,9 @@ export async function getPostsByIds(viewer: Viewer, ids: string[]): Promise<Post
     [ids],
   );
   const helpers = await q<{ post_id: string; people: { code: string; avatar: string | null }[] }>(
+    // Helpers are shown at account level: code always, photo only if that helper's identity is revealed.
     `select post_id, (json_agg(json_build_object('code', code, 'avatar', avatar_media_id)))::jsonb as people from (
-       select distinct on (h.post_id, pr.user_id) h.post_id, pr.code, pr.avatar_media_id
+       select distinct on (h.post_id, pr.user_id) h.post_id, pr.code, case when ${accountRevealed("pr")} then pr.avatar_media_id end as avatar_media_id
          from help_offers h join profiles pr on pr.user_id = h.user_id where h.post_id = any($1::uuid[])
      ) t group by post_id`,
     [ids],
@@ -228,4 +231,75 @@ function diversify<T extends Candidate>(list: T[]): T[] {
 
 export async function recordEvent(userId: string, postId: string, event: string, weight: number) {
   await q(`select ruhiz_record_event($1, $2, $3, $4)`, [userId, postId, event, weight]);
+}
+
+/* ───────────────────────── Explore: randomised discovery ─────────────────────────
+ * Category → content type → random order. Every post has a random `shuffle_key`. A visit picks a
+ * random start point from its seed and walks the (filter, shuffle_key, id) index from there,
+ * wrapping around once. Pages are disjoint index ranges, so there are no duplicates, and no query
+ * ever sorts or scans the whole table. Order inside a page is shuffled again with the seed.
+ */
+export interface ExploreCursor {
+  k: number; // last shuffle_key returned
+  i: string; // last id returned
+  w: 0 | 1; // 0 = from the start point to the end, 1 = wrapped (from 0 up to the start point)
+}
+
+const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
+export const EXPLORE_PAGE = 12;
+
+function prng(seed: number) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+export async function explorePosts(
+  viewer: Viewer,
+  opts: { category: CategoryId | null; kind: "photo" | "video" | "thought" | null; seed: number; cursor: ExploreCursor | null },
+) {
+  const start = (opts.seed >>> 0) / 4294967296;
+  // Only fixed SQL fragments are concatenated; every value is a bound parameter.
+  const filters = [
+    opts.category ? `p.category_id = $2` : `$2::text is null`,
+    opts.kind ? `p.kind = $3` : `$3::text is null`,
+    `not exists (select 1 from post_hidden h where h.user_id = $1 and h.post_id = p.id)`,
+  ].join(" and ");
+
+  const phase = async (w: 0 | 1, after: { k: number; i: string }, limit: number) =>
+    q<{ id: string; shuffle_key: number }>(
+      `select p.id, p.shuffle_key from posts p
+        where ${filters} and (p.shuffle_key, p.id) > ($4::double precision, $5::uuid)
+          ${w === 1 ? "and p.shuffle_key < $6::double precision" : "and $6::double precision is not null"}
+        order by p.shuffle_key, p.id limit ${limit}`,
+      [viewer.id, opts.category, opts.kind, after.k, after.i, start],
+    ).then((rows) => rows.map((r) => ({ ...r, w })));
+
+  const want = EXPLORE_PAGE + 1;
+  const cur = opts.cursor;
+  let rows: { id: string; shuffle_key: number; w: 0 | 1 }[] = [];
+  if (!cur || cur.w === 0) {
+    rows = await phase(0, cur ? { k: cur.k, i: cur.i } : { k: start, i: ZERO_UUID }, want);
+    if (rows.length < want) rows = rows.concat(await phase(1, { k: -1, i: ZERO_UUID }, want - rows.length));
+  } else {
+    rows = await phase(1, { k: cur.k, i: cur.i }, want);
+  }
+
+  const hasMore = rows.length > EXPLORE_PAGE;
+  const page = rows.slice(0, EXPLORE_PAGE);
+  const last = page[page.length - 1];
+  const nextCursor: ExploreCursor | null = hasMore && last ? { k: Number(last.shuffle_key), i: String(last.id), w: last.w } : null;
+
+  // Shuffle within the page (deterministic for the same seed + cursor, so a refetch is stable).
+  const ids = page.map((r) => String(r.id));
+  const rand = prng(opts.seed ^ Math.floor((cur?.k ?? 0) * 1e9) ^ (cur?.w ?? 0));
+  for (let j = ids.length - 1; j > 0; j--) {
+    const x = Math.floor(rand() * (j + 1));
+    [ids[j], ids[x]] = [ids[x], ids[j]];
+  }
+  return { ids, nextCursor };
 }

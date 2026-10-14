@@ -18,7 +18,7 @@ export const POST = route<{ id: string }>({}, async ({ req, viewer, params }) =>
   if (post.author_id !== viewer.id && !viewer.isAdmin) throw forbidden("Only the person who raised this problem can change its status.");
   if (post.status === p.status) throw badRequest("That's already the current status.");
 
-  const note = p.note || `#${viewer.code} moved this to ${LABEL[p.status]}.`;
+  const note = p.note || `Moved to ${LABEL[p.status]}.`;
   await tx([
     { text: `update posts set status = $2, outcome = case when $2 = 'solved' then $3 else outcome end where id = $1`, params: [id, p.status, p.outcome || null] },
     { text: `insert into post_lifecycle_updates (post_id, status, note, actor_id) values ($1, $2, $3, $4)`, params: [id, p.status, note, viewer.id] },

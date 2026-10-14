@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { ChartNoAxesColumn, Check, ChevronRight, ChevronsLeft, ChevronsRight, Flame, HandHelping, MapPin, UserPlus, Users, type LucideIcon } from "lucide-react";
-import type { ProblemStatus, UserLite } from "@/lib/types";
+import type { Member, ProblemStatus } from "@/lib/types";
 import { api, revalidate } from "@/lib/api";
 import { cn, formatCount } from "@/lib/utils";
 import { CATEGORIES } from "@/lib/meta";
@@ -15,8 +15,8 @@ import { StatusPill } from "@/components/ui/Badges";
 
 interface SidebarData {
   topics: { id: keyof typeof CATEGORIES; label: string; activity: number; posts: number }[];
-  suggested: UserLite[];
-  popular: { id: string; title: string; authorCode: string; supports: number; discussions: number; thumbUrl: string | null }[];
+  suggested: Member[];
+  popular: { id: string; title: string; authorCode: string | null; supports: number; discussions: number; thumbUrl: string | null }[];
   nearby: { id: string; title: string; status: ProblemStatus }[];
   location: string;
 }
@@ -170,7 +170,7 @@ export function PopularPosts() {
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[0.86rem] font-semibold text-ink group-hover:text-white">{p.title}</span>
                   <span className="block truncate text-[0.74rem] text-muted">
-                    <span className="code-font">#{p.authorCode}</span> • {formatCount(p.supports)} supports • {p.discussions} comments
+                    <span className="code-font">{p.authorCode ? `#${p.authorCode}` : "Anonymous"}</span> • {formatCount(p.supports)} supports • {p.discussions} comments
                   </span>
                 </span>
               </Link>

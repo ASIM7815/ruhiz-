@@ -1,11 +1,12 @@
 import "server-only";
 import type { Availability, Contribution, ContributionType, HelpOffer, HelpType } from "@/lib/types";
 import { q } from "../db";
-import { ms, toUser, userCols } from "../mappers";
+import { accountRevealed, itemMasked, ms, toMember, toUser, userCols } from "../mappers";
 import type { Viewer } from "../session";
 
 const CONTRIB_SELECT = `
-  select c.id, c.post_id, c.solution_id, c.parent_id, c.author_id, c.type, c.body, c.source, c.identity_mode, c.created_at,
+  select c.id, c.post_id, c.solution_id, c.parent_id, c.author_id, c.type, c.body, c.source, c.created_at,
+         case when c.identity_mode = 'revealer' and ${accountRevealed("pr")} then 'revealer' else 'saver' end as identity_mode,
          ${userCols("pr", "a_", "c.identity_mode")},
          (select count(*) from contribution_helpful h where h.contribution_id = c.id) as helpful,
          exists(select 1 from contribution_helpful h where h.contribution_id = c.id and h.user_id = $1) as helpful_by_me,
@@ -41,8 +42,15 @@ export async function listContributions(viewer: Viewer, target: { kind: "post" |
   return rows.map((r) => toContribution(viewer, r));
 }
 
+/**
+ * A person's contributions. Other people never see the ones made as Identity Saver while the
+ * account is revealed: listing them on the revealed profile would de-anonymise them.
+ */
 export async function listContributionsByAuthor(viewer: Viewer, authorId: string, limit = 100) {
-  const rows = await q(`${CONTRIB_SELECT} where c.author_id = $2 order by c.created_at desc limit $3`, [viewer.id, authorId, limit]);
+  const rows = await q(
+    `${CONTRIB_SELECT} where c.author_id = $2 and (c.author_id = $1 or not ${itemMasked("pr", "c.identity_mode")}) order by c.created_at desc limit $3`,
+    [viewer.id, authorId, limit],
+  );
   return rows.map((r) => toContribution(viewer, r));
 }
 
@@ -61,7 +69,7 @@ function toHelp(viewer: Viewer, r: Record<string, unknown>): HelpOffer {
     id: String(r.id),
     postId: String(r.post_id),
     postTitle: String(r.post_title ?? ""),
-    user: toUser(r, "u_"),
+    user: toMember(r, "u_"),
     type: r.type as HelpType,
     note: String(r.note),
     availability: r.availability as Availability,

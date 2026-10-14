@@ -1,6 +1,6 @@
 import { route } from "@/server/http";
 import { q } from "@/server/db";
-import { toUser, userCols } from "@/server/mappers";
+import { itemMasked, toMember, userCols } from "@/server/mappers";
 
 /** Right-hand panel: trending topics, suggested people, popular posts and nearby problems. Real data only. */
 export const GET = route({}, async ({ viewer }) => {
@@ -27,13 +27,15 @@ export const GET = route({}, async ({ viewer }) => {
     [viewer.id],
   );
 
-  const popular = await q<{ id: string; title: string | null; body: string; code: string; supports: number; discussions: number; media_id: string | null }>(
-    `select p.id, p.title, left(p.body, 120) as body, pr.code, st.supports, st.discussions,
+  const popular = await q<{ id: string; title: string | null; body: string; code: string | null; supports: number; discussions: number; media_id: string | null }>(
+    `select p.id, p.title, left(p.body, 120) as body, case when ${itemMasked("pr", "p.identity_mode")} then null else pr.code end as code, st.supports, st.discussions,
             (select m.id from media m where m.post_id = p.id and m.status = 'ready' and m.kind = 'image' order by m.position limit 1) as media_id
        from posts p join post_stats st on st.post_id = p.id join profiles pr on pr.user_id = p.author_id
       where p.created_at > now() - interval '30 days' and (st.supports + st.discussions + st.cares) > 0
+        and not exists (select 1 from post_hidden h where h.user_id = $1 and h.post_id = p.id)
       order by (st.discussions * 4 + st.supports + st.shares * 2 + st.cares * 0.5) / power(extract(epoch from now() - p.created_at) / 3600.0 + 2, 0.8) desc
       limit 4`,
+    [viewer.id],
   );
 
   const nearby = viewer.location.trim()
@@ -47,11 +49,11 @@ export const GET = route({}, async ({ viewer }) => {
 
   return {
     topics,
-    suggested: suggested.map((r) => toUser(r, "u_")),
+    suggested: suggested.map((r) => toMember(r, "u_")),
     popular: popular.map((p) => ({
       id: p.id,
       title: p.title ?? p.body,
-      authorCode: p.code.trim(),
+      authorCode: p.code ? p.code.trim() : null,
       supports: Number(p.supports),
       discussions: Number(p.discussions),
       thumbUrl: p.media_id ? `/api/media/${p.media_id}` : null,

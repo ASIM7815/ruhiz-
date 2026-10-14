@@ -6,14 +6,20 @@ import { editPost } from "@/server/schemas";
 import { audit, requireAdmin } from "@/server/session";
 import { getPostsByIds, recordEvent } from "@/server/repo/posts";
 import { deletePost } from "@/server/repo/deletion";
-import { ms } from "@/server/mappers";
+import { itemMasked, ms } from "@/server/mappers";
 
 export const GET = route<{ id: string }>({}, async ({ viewer, params }) => {
   const id = parseId(params.id);
   const [post] = await getPostsByIds(viewer, [id]);
   if (!post) throw notFound("This post isn't available.");
   const updates = await q<{ status: string; note: string; created_at: string; code: string | null }>(
-    `select u.status, u.note, u.created_at, pr.code from post_lifecycle_updates u left join profiles pr on pr.user_id = u.actor_id
+    // The author of an Identity Saver post is never named here, not even by code.
+    `select u.status, u.note, u.created_at,
+            case when u.actor_id = p.author_id and ${itemMasked("ap", "p.identity_mode")} then null else pr.code end as code
+       from post_lifecycle_updates u
+       join posts p on p.id = u.post_id
+       join profiles ap on ap.user_id = p.author_id
+       left join profiles pr on pr.user_id = u.actor_id
       where u.post_id = $1 order by u.created_at`,
     [id],
   );
@@ -41,22 +47,25 @@ export const PATCH = route<{ id: string }>({}, async ({ req, viewer, params }) =
   return updated;
 });
 
-/** Authors delete their own posts; the two administrators may delete any post. */
-export const DELETE = route<{ id: string }>({}, async ({ req, viewer, params }) => {
+/**
+ * Authors delete their own posts. Accounts holding the explicit admin role may delete any post.
+ * Ownership and the role are both checked here on the server; the UI only decides what to show.
+ */
+export const DELETE = route<{ id: string }>({ rateLimit: { key: "delete-post", limit: 120, windowSec: 3600 } }, async ({ req, viewer, params }) => {
   const id = parseId(params.id);
-  const post = await one<{ author_id: string; title: string | null }>(`select author_id, title from posts where id = $1`, [id]);
-  if (!post) throw notFound();
+  const post = await one<{ author_id: string }>(`select author_id from posts where id = $1`, [id]);
+  if (!post) throw notFound("This post no longer exists.");
   const own = post.author_id === viewer.id;
-  if (!own && !viewer.isAdmin) throw forbidden("You can only delete your own posts.");
-  if (!own) {
-    // Moderator path: admin status is re-verified against the database.
-    const admin = await requireAdmin();
-    const reason = await req
-      .json()
-      .then((b) => z.object({ reason: z.string().trim().max(300).optional() }).parse(b ?? {}).reason)
-      .catch(() => undefined);
-    await audit(admin, "delete_post", "post", id, { authorId: post.author_id, title: post.title, reason: reason ?? null });
+  if (own) {
+    await deletePost(id, { actorId: viewer.id, kind: "owner" });
+    return { ok: true, by: "owner" };
   }
-  await deletePost(id, own ? "deleted by author" : "removed by moderator");
-  return { ok: true };
+  if (!viewer.isAdmin) throw forbidden("You can only delete your own posts.");
+  // Administrator path: the role is re-verified against the database, and a reason is required.
+  const admin = await requireAdmin();
+  const { reason } = await body(req, z.object({ reason: z.string().trim().min(3, "Give a reason of at least 3 characters").max(300) }).strict());
+  // The audit entry records the post id and reason only — never the author's hidden identity or post content.
+  await audit(admin, "delete_post", "post", id, { reason });
+  await deletePost(id, { actorId: admin.id, kind: "admin", reason });
+  return { ok: true, by: "admin" };
 });

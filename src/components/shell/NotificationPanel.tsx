@@ -113,7 +113,7 @@ export function NotificationButton() {
                       </span>
                     </span>
                     <span className="min-w-0 flex-1 text-[0.84rem] leading-snug text-ink-2">
-                      <span className="code-font font-semibold text-ink">#{n.actor.code}</span> {n.text}
+                      <span className="code-font font-semibold text-ink">{n.actor.code ? `#${n.actor.code}` : "A member"}</span> {n.text}
                       <span className="mt-1 block text-[0.74rem] text-faint">{timeAgo(n.at)}</span>
                     </span>
                     {!n.read && <span className="mt-1.5 size-2 shrink-0 rounded-full bg-accent shadow-[0_0_8px_rgba(255,46,85,.8)]" aria-label="Unread" />}

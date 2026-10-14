@@ -2,14 +2,13 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Check, Loader2 } from "lucide-react";
-import type { CategoryId, HelpType, IdentityMode, Me } from "@/lib/types";
+import { ArrowRight, Check, Loader2, ShieldCheck } from "lucide-react";
+import type { CategoryId, HelpType, Me } from "@/lib/types";
 import { CATEGORIES, HELP_TYPES } from "@/lib/meta";
 import { api, revalidate } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useMe, useStore } from "@/store/store";
 import { Field } from "@/components/ui/Primitives";
-import { IdentityPicker } from "@/components/feed/IdentityPicker";
 import { AvatarEditor } from "@/components/profile/AvatarEditor";
 import { UserCode } from "@/components/ui/UserCode";
 
@@ -22,7 +21,6 @@ export default function WelcomePage() {
   const [headline, setHeadline] = useState(me.headline);
   const [location, setLocation] = useState(me.location);
   const [bio, setBio] = useState(me.bio);
-  const [identity, setIdentity] = useState<IdentityMode>(me.identity);
   const [interests, setInterests] = useState<CategoryId[]>([]);
   const [help, setHelp] = useState<HelpType[]>(me.canHelpWith);
   const [busy, setBusy] = useState(false);
@@ -33,7 +31,7 @@ export default function WelcomePage() {
     setError(null);
     try {
       const next = await api<Me>("/api/me/onboarding", {
-        body: skip ? {} : { headline: headline.trim(), location: location.trim(), bio: bio.trim(), identity, interests, canHelpWith: help, ...(avatar ? { avatarMediaId: avatar } : {}) },
+        body: skip ? {} : { headline: headline.trim(), location: location.trim(), bio: bio.trim(), interests, canHelpWith: help, ...(avatar ? { avatarMediaId: avatar } : {}) },
       });
       actions.setMe(next);
       revalidate("feed", "/api/sidebar");
@@ -55,7 +53,7 @@ export default function WelcomePage() {
       </div>
 
       <div className="card space-y-5 p-5 sm:p-6">
-        <AvatarEditor code={me.code} currentUrl={me.avatarUrl} identity={identity} onChange={(id) => setAvatar(id)} />
+        <AvatarEditor code={me.code} currentUrl={me.avatarUrl} identity={me.identity} onChange={(id) => setAvatar(id)} />
 
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Headline">
@@ -101,9 +99,10 @@ export default function WelcomePage() {
           </div>
         </div>
 
-        <Field label="Profile identity mode">
-          <IdentityPicker value={identity} onChange={setIdentity} />
-        </Field>
+        <p className="flex items-start gap-2 rounded-xl border border-sky-400/25 bg-sky-500/[.07] px-3 py-2.5 text-[0.82rem] leading-relaxed text-sky-100">
+          <ShieldCheck className="mt-0.5 size-4 shrink-0 text-sky-300" aria-hidden />
+          <span>Your identity starts hidden: other members see only your code, not your photo or the details above. You can reveal your identity later in Settings if you choose.</span>
+        </p>
 
         {error && <p className="text-[0.84rem] text-rose-300">{error}</p>}
         <div className="flex flex-wrap justify-end gap-2 border-t border-line pt-4">

@@ -5,15 +5,11 @@ import { one, q } from "./db";
 import { ApiError, forbidden, unauthorized } from "./errors";
 
 /**
- * The only two accounts with moderation powers. Checked against the email and
- * verification flag stored in Neon Auth's own user table (database source of truth),
- * never against anything the browser sends.
+ * Administrators are rows in `user_roles` (role 'admin'), granted only by a migration or the
+ * server-side `npm run admin:grant` script. Nothing the browser sends can grant or claim it,
+ * and the account's email must still be verified in Neon Auth.
  */
-const ADMIN_EMAILS = new Set(["mohammadasimsaad@gmail.com", "owaisarif555@gmail.com"]);
-
-export function isAdminIdentity(email: string | null | undefined, emailVerified: boolean | null | undefined) {
-  return Boolean(emailVerified) && !!email && ADMIN_EMAILS.has(email.trim().toLowerCase());
-}
+const ADMIN_SQL = `exists(select 1 from user_roles r where r.user_id = u.id and r.role = 'admin') and u."emailVerified"`;
 
 export interface Viewer {
   id: string;
@@ -31,9 +27,11 @@ interface ViewerRow {
   email: string;
   email_verified: boolean;
   banned: boolean | null;
+  is_admin: boolean;
   code: string | null;
   location: string | null;
   identity_mode: "saver" | "revealer" | null;
+  revealed_at: string | null;
   settings: Record<string, unknown> | null;
   onboarded: boolean | null;
 }
@@ -48,8 +46,8 @@ function newCode() {
 
 async function loadViewerRow(userId: string) {
   return one<ViewerRow>(
-    `select u.id, u.email, u."emailVerified" as email_verified, u.banned,
-            p.code, p.location, p.identity_mode, p.settings, p.onboarded
+    `select u.id, u.email, u."emailVerified" as email_verified, u.banned, ${ADMIN_SQL} as is_admin,
+            p.code, p.location, p.identity_mode, p.revealed_at, p.settings, p.onboarded
        from neon_auth."user" u left join profiles p on p.user_id = u.id
       where u.id = $1`,
     [userId],
@@ -91,12 +89,19 @@ export async function getViewer(): Promise<Viewer | null> {
     id: row.id,
     code: row.code,
     email: row.email,
-    isAdmin: isAdminIdentity(row.email, row.email_verified),
+    isAdmin: Boolean(row.is_admin),
     location: row.location ?? "",
-    identityMode: row.identity_mode ?? "saver",
+    // Hidden unless the account went through the consented reveal flow.
+    identityMode: row.identity_mode === "revealer" && row.revealed_at ? "revealer" : "saver",
     settings: row.settings ?? {},
     onboarded: Boolean(row.onboarded),
   };
+}
+
+/** True when the account holds the explicit admin role (and is still email-verified). */
+export async function isAdminUser(userId: string) {
+  const row = await one<{ is_admin: boolean }>(`select ${ADMIN_SQL} as is_admin from neon_auth."user" u where u.id = $1`, [userId]);
+  return Boolean(row?.is_admin);
 }
 
 export async function requireViewer(): Promise<Viewer> {
@@ -108,11 +113,8 @@ export async function requireViewer(): Promise<Viewer> {
 /** Re-checks admin status against the database on every call. */
 export async function requireAdmin(): Promise<Viewer> {
   const v = await requireViewer();
-  const row = await one<{ email: string; email_verified: boolean }>(
-    `select email, "emailVerified" as email_verified from neon_auth."user" where id = $1`,
-    [v.id],
-  );
-  if (!row || !isAdminIdentity(row.email, row.email_verified)) throw forbidden("Administrator access only.");
+  const row = await one<{ is_admin: boolean }>(`select ${ADMIN_SQL} as is_admin from neon_auth."user" u where u.id = $1`, [v.id]);
+  if (!row?.is_admin) throw forbidden("Administrator access only.");
   return v;
 }
 

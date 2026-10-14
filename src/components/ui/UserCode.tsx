@@ -6,7 +6,8 @@ import { cn } from "@/lib/utils";
 import { useStore } from "@/store/store";
 
 interface Props {
-  code: string;
+  /** Null for an anonymous (masked) author. */
+  code: string | null;
   link?: boolean;
   size?: "xs" | "sm" | "md" | "lg" | "xl";
   copy?: boolean;
@@ -26,6 +27,12 @@ const SIZE = {
 /** The unique #CODE is the primary public identity on RUHIZ. */
 export function UserCode({ code, link = true, size = "md", copy, verified, className }: Props) {
   const { actions } = useStore();
+  if (!code)
+    return (
+      <span className={cn("inline-flex items-center font-semibold text-ink-2", SIZE[size], className)} title="Posted as Identity Saver">
+        Anonymous member
+      </span>
+    );
   const inner = (
     <span className={cn("code-font inline-flex items-center gap-1 font-semibold text-ink", SIZE[size], className)}>
       <span className="text-brand-ink/80">#</span>

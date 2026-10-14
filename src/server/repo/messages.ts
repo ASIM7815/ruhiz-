@@ -3,7 +3,7 @@ import type { ConversationSummary, Message } from "@/lib/types";
 import { resolveSettings } from "@/lib/settings";
 import { one, q } from "../db";
 import { forbidden, notFound } from "../errors";
-import { ms, toUser, userCols } from "../mappers";
+import { ms, toMember, userCols } from "../mappers";
 import type { Viewer } from "../session";
 
 export async function listConversations(viewer: Viewer): Promise<ConversationSummary[]> {
@@ -22,7 +22,7 @@ export async function listConversations(viewer: Viewer): Promise<ConversationSum
   );
   return rows.map((r) => ({
     id: String(r.id),
-    with: toUser(r, "o_"),
+    with: toMember(r, "o_"),
     context: (r.context as string) ?? null,
     lastMessage: r.last_body ? { text: String(r.last_body), fromMe: r.last_sender === viewer.id, at: ms(r.last_at) } : null,
     unread: Number(r.unread),

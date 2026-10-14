@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import { Check, CircleAlert, Copy, Flag, HandCoins, Loader2, LogOut, MessageCircle, PenLine, Send, Share2, Trash, UserPlus, Users } from "lucide-react";
-import type { ConversationSummary, HelpType, IdentityMode, Me, Solution, UserLite } from "@/lib/types";
+import type { ConversationSummary, HelpType, IdentityMode, Me, Member, Solution } from "@/lib/types";
 import { HELP_TYPES } from "@/lib/meta";
 import { api, revalidate } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
@@ -151,7 +151,7 @@ export function PledgeModal({ solution: s, onClose }: { solution: Solution; onCl
 }
 
 /* ───────── Supporters / Supporting ───────── */
-type PersonRow = UserLite & { supportedByMe: boolean; isMe: boolean };
+type PersonRow = Member & { supportedByMe: boolean; isMe: boolean };
 export function PeopleModal({ code, list, onClose }: { code: string; list: "supporters" | "supporting"; onClose: () => void }) {
   const { actions } = useStore();
   const [tab, setTab] = useState(list);
@@ -218,9 +218,6 @@ export function EditProfileModal({ onClose }: { onClose: () => void }) {
   const [location, setLocation] = useState(me.location);
   const [expertise, setExpertise] = useState(me.expertise.join(", "));
   const [help, setHelp] = useState<HelpType[]>(me.canHelpWith);
-  const [identity, setIdentity] = useState<IdentityMode>(me.identity);
-  const [revealedName, setRevealedName] = useState(me.revealedName);
-  const [revealedRole, setRevealedRole] = useState(me.revealedRole);
   const [avatar, setAvatar] = useState<{ id: string | null } | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -237,9 +234,6 @@ export function EditProfileModal({ onClose }: { onClose: () => void }) {
           location,
           expertise: expertise.split(",").map((x) => x.trim()).filter(Boolean).slice(0, 12),
           canHelpWith: help,
-          identity,
-          revealedName,
-          revealedRole,
           ...(avatar !== undefined ? { avatarMediaId: avatar.id } : {}),
         },
       });
@@ -274,7 +268,12 @@ export function EditProfileModal({ onClose }: { onClose: () => void }) {
       }
     >
       <div className="space-y-3.5">
-        <AvatarEditor code={me.code} currentUrl={me.avatarUrl} identity={identity} onChange={(id) => setAvatar({ id })} />
+        {me.identity !== "revealer" && (
+          <p className="rounded-xl border border-sky-400/25 bg-sky-500/[.07] px-3 py-2 text-[0.8rem] leading-relaxed text-sky-100">
+            Your identity is hidden, so your photo, headline, bio, area and expertise are visible only to you. They appear to others only if you reveal your identity in Settings.
+          </p>
+        )}
+        <AvatarEditor code={me.code} currentUrl={me.avatarUrl} identity={me.identity} onChange={(id) => setAvatar({ id })} />
         <Field label="Headline" hint={`${headline.length}/80`}>
           <input value={headline} onChange={(e) => setHeadline(e.target.value)} className="input" maxLength={80} placeholder="e.g. Civil engineering student · Water access" />
         </Field>
@@ -303,19 +302,14 @@ export function EditProfileModal({ onClose }: { onClose: () => void }) {
             })}
           </div>
         </div>
-        <Field label="Profile identity mode">
-          <IdentityPicker value={identity} onChange={setIdentity} />
-        </Field>
-        {identity === "revealer" && (
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Name shown when revealed">
-              <input value={revealedName} onChange={(e) => setRevealedName(e.target.value)} maxLength={60} className="input" />
-            </Field>
-            <Field label="Role">
-              <input value={revealedRole} onChange={(e) => setRevealedRole(e.target.value)} maxLength={80} className="input" />
-            </Field>
-          </div>
-        )}
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line p-3">
+          <span className="text-[0.82rem] text-ink-2">
+            Identity: <b className="text-ink">{me.identity === "revealer" ? `Revealed as ${me.revealedName}` : "Hidden (Identity Saver)"}</b>
+          </span>
+          <button type="button" onClick={() => actions.openModal({ type: "revealIdentity" })} className="btn btn-outline btn-sm">
+            {me.identity === "revealer" ? "Update identity" : "Reveal identity"}
+          </button>
+        </div>
         <ErrorLine text={error} />
       </div>
     </Modal>
@@ -330,7 +324,7 @@ export function NewMessageModal({ initialCode, onClose }: { initialCode?: string
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const code = normalizeCode(q);
-  const { data: matches = [] } = useSWR<(UserLite & { isMe: boolean })[]>(code ? `/api/users/search?q=${code}` : null);
+  const { data: matches = [] } = useSWR<(Member & { isMe: boolean })[]>(code ? `/api/users/search?q=${code}` : null);
   const exact = matches.find((m) => m.code === code && !m.isMe);
 
   const open = async () => {

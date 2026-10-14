@@ -27,16 +27,28 @@ export type FeedTab = "for-you" | "latest" | "trending" | "nearby" | "unsolved";
 export type Availability = "Today" | "This week" | "This month" | "Ongoing" | "One-time";
 
 export interface UserLite {
-  code: string;
+  /**
+   * The public #CODE. Null when the item was posted as Identity Saver by an account that is
+   * revealed now: showing the code would lead straight to the revealed profile.
+   */
+  code: string | null;
+  /** Only set while the person's identity is revealed. */
   avatarUrl: string | null;
+  /** Only set while the person's identity is revealed. */
   headline: string;
   online: boolean;
-  /** Present only when the person chose Identity Revealer for this context. */
+  /** Present only when the account is revealed AND this item was posted as Identity Revealer. */
   revealed: { name: string; role: string } | null;
   verifiedProfessional?: boolean;
 }
 
-export interface Profile extends UserLite {
+/** Someone shown at account level (profiles, people lists, messages, solutions): always has a code. */
+export interface Member extends UserLite {
+  code: string;
+}
+
+export interface Profile extends Member {
+  bannerUrl: string | null;
   bio: string;
   location: string;
   identity: IdentityMode;
@@ -45,9 +57,11 @@ export interface Profile extends UserLite {
   supporters: number;
   supporting: number;
   joinedAt: number;
-  impact: { solved: number; solutions: number; helped: number };
+  impact: { solutions: number; helped: number };
   counts: { posts: number; photos: number; videos: number; thoughts: number; contributions: number };
   isMe: boolean;
+  /** The owner is looking at their own hidden profile: private details are visible to them only. */
+  ownerView: boolean;
   supportedByMe: boolean;
 }
 
@@ -68,12 +82,15 @@ export interface Me {
   code: string;
   email: string;
   avatarUrl: string | null;
+  bannerUrl: string | null;
   headline: string;
   bio: string;
   location: string;
+  /** Account-level: "saver" (hidden, the default) until a consented reveal. */
   identity: IdentityMode;
   revealedName: string;
   revealedRole: string;
+  revealedAt: number | null;
   expertise: string[];
   canHelpWith: HelpType[];
   onboarded: boolean;
@@ -153,7 +170,7 @@ export interface HelpOffer {
   id: string;
   postId: string;
   postTitle?: string;
-  user: UserLite;
+  user: Member;
   type: HelpType;
   note: string;
   availability: Availability;
@@ -163,8 +180,9 @@ export interface HelpOffer {
 
 export interface Solution {
   id: string;
-  problem: { id: string; title: string; status: ProblemStatus | null; authorCode: string } | null;
-  author: UserLite;
+  /** authorCode is null when the problem was posted as Identity Saver by an account that is now revealed. */
+  problem: { id: string; title: string; status: ProblemStatus | null; authorCode: string | null; isMine: boolean } | null;
+  author: Member;
   title: string;
   summary: string;
   approach: string[];
@@ -190,7 +208,7 @@ export interface Solution {
 
 export interface ConversationSummary {
   id: string;
-  with: UserLite;
+  with: Member;
   context: string | null;
   lastMessage: { text: string; fromMe: boolean; at: number } | null;
   unread: number;
@@ -217,7 +235,7 @@ export interface AppNotification {
 }
 
 export interface SupportListing {
-  user: UserLite;
+  user: Member;
   professional: boolean;
   credential: string | null;
   areas: string[];
@@ -243,4 +261,13 @@ export interface MySupportListing {
 export interface Page<T> {
   items: T[];
   hasMore: boolean;
+}
+
+export type ExploreType = "all" | "video" | "photo" | "thought";
+
+export interface ExplorePage {
+  categories: { id: CategoryId; posts: number }[];
+  posts: Post[];
+  /** Opaque; pass back as ?cursor= to get the next page. Null when there are no more posts. */
+  nextCursor: string | null;
 }

@@ -7,6 +7,8 @@ import { notify } from "@/server/repo/notify";
 
 export const POST = route({ rateLimit: { key: "post", limit: 30, windowSec: 3600 } }, async ({ req, viewer }) => {
   const p = await body(req, newPost);
+  if (p.identity === "revealer" && viewer.identityMode !== "revealer")
+    throw badRequest("Reveal your identity in Settings before posting as Identity Revealer.");
 
   if (p.addresses) {
     const target = await one<{ author_id: string }>(`select author_id from posts where id = $1 and intent = 'problem'`, [p.addresses]);
@@ -32,7 +34,7 @@ export const POST = route({ rateLimit: { key: "post", limit: 30, windowSec: 3600
   const id = row.id;
 
   for (const [i, mid] of p.mediaIds.entries()) await q(`update media set post_id = $1, position = $2 where id = $3`, [id, i, mid]);
-  if (isProblem) await q(`insert into post_lifecycle_updates (post_id, status, note, actor_id) values ($1, 'unsolved', $2, $3)`, [id, `Problem raised by #${viewer.code}.`, viewer.id]);
+  if (isProblem) await q(`insert into post_lifecycle_updates (post_id, status, note, actor_id) values ($1, 'unsolved', $2, $3)`, [id, "Problem raised.", viewer.id]);
   await recordEvent(viewer.id, id, "author", 3);
 
   if (p.addresses) {

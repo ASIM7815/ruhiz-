@@ -11,12 +11,12 @@ export const POST = route({}, async ({ req, viewer }) => {
     const rows = await q(`select 1 from media where id = $1 and owner_id = $2 and purpose = 'avatar' and status = 'ready'`, [p.avatarMediaId, viewer.id]);
     if (!rows.length) throw badRequest("That photo upload wasn't found.");
   }
+  // Onboarding never changes identity status: every account starts hidden (Identity Saver).
   await q(
     `update profiles set headline = coalesce($2, headline), bio = coalesce($3, bio), location = coalesce($4, location),
-            identity_mode = coalesce($5, identity_mode), can_help_with = coalesce($6, can_help_with),
-            avatar_media_id = coalesce($7, avatar_media_id), onboarded = true
+            can_help_with = coalesce($5, can_help_with), avatar_media_id = coalesce($6, avatar_media_id), onboarded = true
       where user_id = $1`,
-    [viewer.id, p.headline ?? null, p.bio ?? null, p.location ?? null, p.identity ?? null, p.canHelpWith ?? null, p.avatarMediaId ?? null],
+    [viewer.id, p.headline ?? null, p.bio ?? null, p.location ?? null, p.canHelpWith ?? null, p.avatarMediaId ?? null],
   );
   for (const cat of p.interests) {
     await q(`select ruhiz_add_interest($1, $2, 3)`, [viewer.id, cat]);

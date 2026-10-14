@@ -16,6 +16,8 @@ export const GET = route({}, async ({ req, viewer }) => {
 
 export const POST = route({ rateLimit: { key: "contribution", limit: 90, windowSec: 3600 } }, async ({ req, viewer }) => {
   const p = await body(req, newContribution);
+  if (p.identity === "revealer" && viewer.identityMode !== "revealer")
+    throw badRequest("Reveal your identity in Settings before posting as Identity Revealer.");
 
   let ownerId: string | null = null;
   let isProblem = false;
@@ -49,8 +51,8 @@ export const POST = route({ rateLimit: { key: "contribution", limit: 90, windowS
   if (p.postId) {
     await recordEvent(viewer.id, p.postId, "contribute", 1);
     if (isProblem) {
-      if (p.type === "solution") await advanceProblem(p.postId, "solutions", `#${viewer.code} proposed a solution in the discussion.`);
-      else if (p.type !== "support") await advanceProblem(p.postId, "discussion", `Discussion started by #${viewer.code}.`);
+      if (p.type === "solution") await advanceProblem(p.postId, "solutions", "A member proposed a solution in the discussion.");
+      else if (p.type !== "support") await advanceProblem(p.postId, "discussion", "Discussion started.");
     }
   }
   await notify(ownerId, viewer.id, "response", { postId: p.postId, solutionId: p.solutionId });

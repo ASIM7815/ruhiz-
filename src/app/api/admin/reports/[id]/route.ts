@@ -2,7 +2,7 @@ import { z } from "zod";
 import { body, parseId, route } from "@/server/http";
 import { one, q } from "@/server/db";
 import { badRequest, forbidden, notFound } from "@/server/errors";
-import { audit, isAdminIdentity } from "@/server/session";
+import { audit, isAdminUser } from "@/server/session";
 import { deleteAccount, deletePost } from "@/server/repo/deletion";
 
 const action = z
@@ -20,7 +20,7 @@ export const PATCH = route<{ id: string }>({ access: "admin" }, async ({ req, vi
   if (!r) throw notFound("Report not found.");
 
   if (p.action === "remove_content") {
-    if (r.post_id) await deletePost(r.post_id, "removed by moderator");
+    if (r.post_id) await deletePost(r.post_id, { actorId: viewer.id, kind: "admin", reason: p.note ?? "report upheld" });
     else if (r.contribution_id) await q(`delete from contributions where id = $1`, [r.contribution_id]);
     else if (r.solution_id) await q(`delete from solutions where id = $1`, [r.solution_id]);
     else throw badRequest("This report is about an account. Use delete account instead.");
@@ -31,8 +31,7 @@ export const PATCH = route<{ id: string }>({ access: "admin" }, async ({ req, vi
     if (!uid && r.contribution_id) uid = (await one<{ author_id: string }>(`select author_id from contributions where id = $1`, [r.contribution_id]))?.author_id ?? null;
     if (!uid && r.solution_id) uid = (await one<{ author_id: string }>(`select author_id from solutions where id = $1`, [r.solution_id]))?.author_id ?? null;
     if (!uid) throw notFound("The account no longer exists.");
-    const u = await one<{ email: string; email_verified: boolean }>(`select email, "emailVerified" as email_verified from neon_auth."user" where id = $1`, [uid]);
-    if (u && isAdminIdentity(u.email, u.email_verified)) throw forbidden("Administrator accounts can't be deleted from moderation.");
+    if (await isAdminUser(uid)) throw forbidden("Administrator accounts can't be deleted from moderation.");
     await deleteAccount(uid, "deleted by moderator");
     await audit(viewer, "delete_account", "user", uid, { via: "report", reportId: id, note: p.note ?? null });
   }

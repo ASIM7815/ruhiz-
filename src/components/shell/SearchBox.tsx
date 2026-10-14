@@ -4,11 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import { ArrowRight, Hash, Loader2, Search, SearchX, X } from "lucide-react";
-import type { UserLite } from "@/lib/types";
+import type { Member } from "@/lib/types";
 import { cn, formatCount, normalizeCode } from "@/lib/utils";
 import { Avatar } from "@/components/ui/Avatar";
 
-type Result = UserLite & { supporters: number; location: string };
+type Result = Member & { supporters: number; location: string };
 
 function useDebounced<T>(v: T, ms: number) {
   const [d, setD] = useState(v);

@@ -42,7 +42,8 @@ export function ComposerModal({ kind: initialKind, addresses, onClose }: { kind:
   const [category, setCategory] = useState<CategoryId>("community");
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
-  const [identity, setIdentity] = useState<IdentityMode>(me.settings.defaultIdentity);
+  // Hidden by default: Revealer is only possible (and only pre-selected) while the account is revealed.
+  const [identity, setIdentity] = useState<IdentityMode>(me.identity === "revealer" ? me.settings.defaultIdentity : "saver");
   const [tagArea, setTagArea] = useState(false);
   const [items, setItems] = useState<Item[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -248,6 +249,7 @@ export function ComposerModal({ kind: initialKind, addresses, onClose }: { kind:
               >
                 {kind === "video" ? <Video className="size-6 text-brand-ink" /> : <ImageIcon className="size-6 text-brand-ink" />}
                 Drop {kind === "video" ? "a video" : "photos"} here or click to choose
+                <span className="text-[0.72rem] text-faint">{kind === "video" ? "MP4, WebM or MOV · up to 1 GB" : "JPG, PNG, WebP or GIF · up to 10 MB each"}</span>
               </button>
             ) : (
               <div className="flex gap-2 overflow-x-auto pb-1">
@@ -270,10 +272,21 @@ export function ComposerModal({ kind: initialKind, addresses, onClose }: { kind:
                       </div>
                     )}
                     {it.error && (
-                      <div className="absolute inset-0 grid place-items-center bg-rose-950/80 p-2 text-center text-[0.7rem] leading-tight text-rose-100" title={it.error}>
+                      <div className="absolute inset-0 grid place-items-center bg-rose-950/85 p-2 text-center text-[0.7rem] leading-tight text-rose-100" title={it.error} role="alert">
                         <span>
                           <CircleAlert className="mx-auto mb-1 size-4" />
-                          {it.error}
+                          <span className="line-clamp-2">{it.error}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const again = { ...it, error: undefined, progress: 0 };
+                              setItems((xs) => xs.map((x) => (x.key === it.key ? again : x)));
+                              startUpload(again);
+                            }}
+                            className="mt-1 rounded-md bg-white/15 px-2 py-0.5 font-semibold text-white hover:bg-white/25"
+                          >
+                            Retry
+                          </button>
                         </span>
                       </div>
                     )}

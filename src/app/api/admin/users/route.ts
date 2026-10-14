@@ -1,14 +1,14 @@
 import { route } from "@/server/http";
 import { q } from "@/server/db";
-import { ms } from "@/server/mappers";
-import { isAdminIdentity } from "@/server/session";
+import { accountRevealed, ms } from "@/server/mappers";
 
 /** Admin user lookup by code or email. Emails are visible here only. */
 export const GET = route({ access: "admin" }, async ({ req }) => {
   const term = (req.nextUrl.searchParams.get("q") ?? "").trim().slice(0, 120);
   const code = term.toUpperCase().replace(/[^A-Z0-9]/g, "");
   const rows = await q(
-    `select p.code, p.headline, p.created_at, p.last_seen_at, u.email, u."emailVerified" as email_verified,
+    `select p.code, case when ${accountRevealed("p")} then p.headline else '' end as headline, p.created_at, p.last_seen_at, u.email,
+            exists(select 1 from user_roles r where r.user_id = u.id and r.role = 'admin') and u."emailVerified" as is_admin,
             (select count(*)::int from posts where author_id = p.user_id) as posts,
             (select count(*)::int from contributions where author_id = p.user_id) as contributions,
             (select count(*)::int from reports r where r.status = 'open' and (r.reported_user_id = p.user_id
@@ -28,6 +28,6 @@ export const GET = route({ access: "admin" }, async ({ req }) => {
     posts: r.posts,
     contributions: r.contributions,
     openReports: r.open_reports,
-    isAdmin: isAdminIdentity(String(r.email), Boolean(r.email_verified)),
+    isAdmin: Boolean(r.is_admin),
   }));
 });

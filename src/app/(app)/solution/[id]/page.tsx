@@ -44,7 +44,7 @@ function Detail({ initial }: { initial: Solution }) {
   const pct = s.funding.needed ? (s.funding.raised / s.funding.needed) * 100 : 100;
   const me = useMe();
   // Mirrors the server rule: only the problem's author (or an admin) confirms completion.
-  const canComplete = s.stage !== "implementing" || me.isAdmin || s.problem?.authorCode === me.code;
+  const canComplete = s.stage !== "implementing" || me.isAdmin || s.problem?.isMine;
 
   const advance = async () => {
     setBusy("advance");

@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { CircleCheck, Info, TriangleAlert, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -131,7 +132,11 @@ export function EmptyState({
   );
 }
 
-/* ───────── Dropdown menu ───────── */
+/* ───────── Dropdown menu ─────────
+ * Rendered in a portal with fixed positioning, so a card's `overflow: hidden` can't clip it
+ * (that clipping is what hid "Delete post" at the bottom of short posts). It opens upward when
+ * there's more room above, scrolls when taller than the viewport, and is keyboard operable.
+ */
 export function Menu({
   trigger,
   children,
@@ -146,34 +151,89 @@ export function Menu({
   label?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number; maxH: number } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const close = () => setOpen(false);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setPos(null);
+      return;
+    }
+    const place = () => {
+      const t = ref.current?.getBoundingClientRect();
+      const m = menu.current;
+      if (!t || !m) return;
+      const gap = 8;
+      const mh = m.scrollHeight;
+      const mw = m.offsetWidth;
+      const below = window.innerHeight - t.bottom - gap * 2;
+      const above = t.top - gap * 2;
+      const up = mh > below && above > below;
+      const maxH = Math.max(140, up ? above : below);
+      const left = Math.min(Math.max(gap, align === "right" ? t.right - mw : t.left), window.innerWidth - mw - gap);
+      const top = up ? Math.max(gap, t.top - gap - Math.min(mh, maxH)) : t.bottom + gap;
+      setPos({ top, left, maxH });
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open, align]);
+
   useEffect(() => {
     if (!open) return;
-    const onDown = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
-    document.addEventListener("mousedown", onDown);
+    const items = () => [...(menu.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
+    // Focus the first item once positioned, for keyboard users.
+    const id = window.setTimeout(() => items()[0]?.focus({ preventScroll: true }), 0);
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (!ref.current?.contains(t) && !menu.current?.contains(t)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setOpen(false);
+        ref.current?.querySelector<HTMLElement>("button,[href]")?.focus();
+      } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        const list = items();
+        if (!list.length) return;
+        e.preventDefault();
+        const i = list.indexOf(document.activeElement as HTMLElement);
+        list[(i + (e.key === "ArrowDown" ? 1 : -1) + list.length) % list.length].focus();
+      } else if (e.key === "Tab") setOpen(false);
+    };
+    document.addEventListener("pointerdown", onDown);
     document.addEventListener("keydown", onKey);
     return () => {
-      document.removeEventListener("mousedown", onDown);
+      window.clearTimeout(id);
+      document.removeEventListener("pointerdown", onDown);
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);
+
   return (
     <div ref={ref} className="relative">
       {trigger({ open, toggle: () => setOpen((o) => !o) })}
-      {open && (
-        <div
-          role="menu"
-          aria-label={label}
-          className={cn(
-            "absolute top-full z-50 mt-2 min-w-[13rem] overflow-hidden rounded-xl border border-line-strong bg-[var(--card-solid)] p-1.5 shadow-[0_24px_50px_-16px_rgba(0,0,0,.9)] anim-scale",
-            align === "right" ? "right-0" : "left-0",
-            className,
-          )}
-        >
-          {children(() => setOpen(false))}
-        </div>
-      )}
+      {open &&
+        createPortal(
+          <div
+            ref={menu}
+            role="menu"
+            aria-label={label}
+            style={{ position: "fixed", top: pos?.top ?? 0, left: pos?.left ?? 0, maxHeight: pos?.maxH, visibility: pos ? "visible" : "hidden" }}
+            className={cn(
+              "z-[75] min-w-[13rem] overflow-y-auto overscroll-contain rounded-xl border border-line-strong bg-[var(--card-solid)] p-1.5 shadow-[0_24px_50px_-16px_rgba(0,0,0,.9)] anim-scale",
+              className,
+            )}
+          >
+            {children(close)}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
@@ -194,8 +254,8 @@ export function MenuItem({
   hint?: string;
 }) {
   const cls = cn(
-    "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[0.85rem] font-medium transition-colors",
-    danger ? "text-rose-300 hover:bg-rose-500/10" : "text-ink-2 hover:bg-white/[.06] hover:text-ink",
+    "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[0.85rem] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-brand",
+    danger ? "text-rose-300 hover:bg-rose-500/10 focus:bg-rose-500/10" : "text-ink-2 hover:bg-white/[.06] hover:text-ink focus:bg-white/[.06]",
   );
   const inner = (
     <>
@@ -266,7 +326,7 @@ export function CardTitle({
   );
 }
 
-export function Field({ label, hint, children, className }: { label: string; hint?: string; children: React.ReactNode; className?: string }) {
+export function Field({ label, hint, error, children, className }: { label: string; hint?: string; error?: string; children: React.ReactNode; className?: string }) {
   return (
     <label className={cn("block", className)}>
       <span className="mb-1.5 flex items-baseline justify-between gap-2">
@@ -274,6 +334,11 @@ export function Field({ label, hint, children, className }: { label: string; hin
         {hint && <span className="text-[0.72rem] text-faint">{hint}</span>}
       </span>
       {children}
+      {error && (
+        <span className="mt-1 block text-[0.76rem] text-rose-300" role="alert">
+          {error}
+        </span>
+      )}
     </label>
   );
 }

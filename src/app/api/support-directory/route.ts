@@ -1,6 +1,6 @@
 import { route } from "@/server/http";
 import { q } from "@/server/db";
-import { toUser, userCols } from "@/server/mappers";
+import { toMember, userCols } from "@/server/mappers";
 import type { SupportListing } from "@/lib/types";
 
 /**
@@ -21,7 +21,7 @@ export const GET = route({}, async ({ viewer }) => {
   );
   return rows.map(
     (r): SupportListing => ({
-      user: toUser(r, "u_"),
+      user: toMember(r, "u_"),
       professional: r.cred_status === "verified",
       credential: r.cred_status === "verified" ? `${r.credential_type} · ${r.issuing_body}` : null,
       areas: r.areas as string[],

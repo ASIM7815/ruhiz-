@@ -1,13 +1,13 @@
 import "server-only";
 import type { ProblemStatus, Solution, SolutionStage } from "@/lib/types";
 import { q } from "../db";
-import { ms, toUser, userCols } from "../mappers";
+import { itemMasked, ms, toMember, userCols } from "../mappers";
 import type { Viewer } from "../session";
 
 const SOL_SELECT = `
   select s.*, ${userCols("pr", "a_")},
          p.title as problem_title, left(p.body, 90) as problem_body, p.status as problem_status, p.author_id as problem_author_id,
-         pp.code as problem_author_code,
+         case when ${itemMasked("pp", "p.identity_mode")} then null else pp.code end as problem_author_code,
          (select count(*) from solution_supports x where x.solution_id = s.id) as supports,
          exists(select 1 from solution_supports x where x.solution_id = s.id and x.user_id = $1) as supported_by_me,
          exists(select 1 from solution_saves x where x.solution_id = s.id and x.user_id = $1) as saved_by_me,
@@ -34,9 +34,10 @@ function toSolution(viewer: Viewer, r: Record<string, unknown>): Solution {
       id: String(r.problem_id),
       title: String(r.problem_title ?? r.problem_body ?? ""),
       status: (r.problem_status as ProblemStatus) ?? null,
-      authorCode: String(r.problem_author_code).trim(),
+      authorCode: r.problem_author_code ? String(r.problem_author_code).trim() : null,
+      isMine: r.problem_author_id === viewer.id,
     },
-    author: toUser(r, "a_"),
+    author: toMember(r, "a_"),
     title: String(r.title),
     summary: String(r.summary),
     approach: r.approach as string[],

@@ -14,19 +14,48 @@ export const CONTRIB_TYPE = z.enum(["experience", "evidence", "opinion", "counte
 export const STATUS = z.enum(["unsolved", "discussion", "solutions", "implementation", "solved"]);
 export const SUPPORT_AREA = z.string().trim().min(2).max(40);
 
+/**
+ * Profile edits. Identity status and the revealed name/role are deliberately NOT editable here:
+ * they change only through the consented reveal flow (identityReveal) and DELETE /api/me/identity.
+ */
 export const profilePatch = z
   .object({
     headline: z.string().trim().max(80),
     bio: z.string().trim().max(280),
     location: z.string().trim().max(80),
-    identity: IDENTITY,
-    revealedName: z.string().trim().max(60),
-    revealedRole: z.string().trim().max(80),
     expertise: z.array(z.string().trim().min(1).max(40)).max(12),
     canHelpWith: z.array(HELP_TYPE).max(10),
     avatarMediaId: z.string().uuid().nullable(),
+    bannerMediaId: z.string().uuid().nullable(),
   })
   .partial()
+  .strict();
+
+/** Collapses runs of whitespace and rejects control characters. */
+const cleanLine = (min: number, max: number, label: string) =>
+  z
+    .string()
+    .transform((v) => v.replace(/\s+/g, " ").trim())
+    .pipe(
+      z
+        .string()
+        .min(min, `${label} must be at least ${min} characters`)
+        .max(max, `${label} must be at most ${max} characters`)
+        .refine((v) => /\p{L}/u.test(v), `${label} must contain letters`)
+        .refine((v) => !/[\u0000-\u001f\u007f]/.test(v), `${label} contains invalid characters`),
+    );
+
+/** Required details for revealing an identity. `confirm` must be literally true (explicit consent). */
+export const identityReveal = z
+  .object({
+    name: cleanLine(2, 60, "Name"),
+    role: cleanLine(2, 80, "Role"),
+    description: z
+      .string()
+      .transform((v) => v.trim())
+      .pipe(z.string().min(10, "Description must be at least 10 characters").max(280, "Description must be at most 280 characters").refine((v) => /\p{L}/u.test(v), "Description must contain letters")),
+    confirm: z.literal(true, { message: "Confirm that you understand your identity will be visible to other members" }),
+  })
   .strict();
 
 export const onboarding = profilePatch.extend({ interests: z.array(CATEGORY).max(13).default([]) });
@@ -132,7 +161,7 @@ export const credentialApplication = z
 
 export const presign = z
   .object({
-    purpose: z.enum(["post", "avatar"]),
+    purpose: z.enum(["post", "avatar", "banner"]),
     kind: z.enum(["image", "video"]),
     mime: z.string().trim().toLowerCase().max(60),
     size: z.number().int().positive(),

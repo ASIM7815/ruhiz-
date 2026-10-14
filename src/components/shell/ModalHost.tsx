@@ -4,6 +4,7 @@ import { useStore } from "@/store/store";
 import { ComposerModal, EditPostModal } from "@/components/feed/ComposerModal";
 import { HelpModal, ProposeModal, StatusModal } from "@/components/problem/ProblemModals";
 import { RequestSupportModal, SupportProfileModal } from "@/components/support/SupportModals";
+import { RevealIdentityModal } from "@/components/profile/IdentityReveal";
 import { ConfirmModal, DeleteAccountModal, EditProfileModal, LogoutModal, NewMessageModal, PeopleModal, PledgeModal, ReportModal, ShareModal } from "./CommonModals";
 
 /** Renders whichever global modal is open. */
@@ -31,6 +32,8 @@ export function ModalHost() {
       return <PeopleModal code={m.code} list={m.list} onClose={close} />;
     case "editProfile":
       return <EditProfileModal onClose={close} />;
+    case "revealIdentity":
+      return <RevealIdentityModal onClose={close} />;
     case "supportProfile":
       return <SupportProfileModal listing={m.listing} onClose={close} />;
     case "requestSupport":

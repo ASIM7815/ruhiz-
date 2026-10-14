@@ -4,7 +4,7 @@ import { notFound } from "@/server/errors";
 import { newMessage } from "@/server/schemas";
 import { assertCanMessage, listMessages, loadConversation } from "@/server/repo/messages";
 import { notify } from "@/server/repo/notify";
-import { toUser, userCols } from "@/server/mappers";
+import { toMember, userCols } from "@/server/mappers";
 
 /** Messages in a conversation the viewer belongs to. Reading marks it read. */
 export const GET = route<{ id: string }>({ rateLimit: { key: "read-messages", limit: 2000, windowSec: 3600 } }, async ({ viewer, params }) => {
@@ -17,7 +17,7 @@ export const GET = route<{ id: string }>({ rateLimit: { key: "read-messages", li
     [c.id, viewer.id],
   );
   await q(`update notifications set read_at = now() where user_id = $1 and conversation_id = $2 and read_at is null`, [viewer.id, c.id]);
-  return { id: c.id, context: c.context, with: other ? { ...toUser(other, "u_"), identity: other.identity_mode } : null, messages };
+  return { id: c.id, context: c.context, with: other ? { ...toMember(other, "u_"), identity: other.identity_mode } : null, messages };
 });
 
 export const POST = route<{ id: string }>({ rateLimit: { key: "message", limit: 300, windowSec: 3600 } }, async ({ req, viewer, params }) => {

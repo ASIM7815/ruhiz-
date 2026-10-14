@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const SIZES = {
@@ -21,7 +22,8 @@ const TEXT = { xs: "text-[0.55rem]", sm: "text-[0.65rem]", md: "text-[0.78rem]",
 export type AvatarSize = keyof typeof SIZES;
 
 interface Props {
-  code: string;
+  /** Null for an anonymous (masked) author: a neutral avatar with no link. */
+  code: string | null;
   src?: string | null;
   size?: AvatarSize;
   online?: boolean;
@@ -33,6 +35,16 @@ interface Props {
 /** Profile picture for a RUHIZ member. Falls back to their code's initials (no stock photos). */
 export function Avatar({ code, src, size = "md", online, ring, link, className }: Props) {
   const [failed, setFailed] = useState(false);
+  if (!code)
+    return (
+      <span
+        role="img"
+        aria-label="Anonymous member"
+        className={cn("relative grid shrink-0 place-items-center rounded-full border border-line bg-elev-2 text-slate-300", SIZES[size], ring && "ring-2 ring-brand/50 ring-offset-2 ring-offset-bg", className)}
+      >
+        <ShieldCheck className="size-1/2" aria-hidden />
+      </span>
+    );
   const body = (
     <span className={cn("relative inline-block shrink-0", SIZES[size], className)}>
       {src && !failed ? (
@@ -69,13 +81,13 @@ export function Avatar({ code, src, size = "md", online, ring, link, className }
 }
 
 /** Overlapping stack of avatars. */
-export function AvatarStack({ people, max = 4, size = "sm", total }: { people: { code: string; avatarUrl: string | null }[]; max?: number; size?: AvatarSize; total?: number }) {
+export function AvatarStack({ people, max = 4, size = "sm", total }: { people: { code: string | null; avatarUrl: string | null }[]; max?: number; size?: AvatarSize; total?: number }) {
   const shown = people.slice(0, max);
   const extra = (total ?? people.length) - shown.length;
   return (
     <div className="flex items-center">
       {shown.map((p, i) => (
-        <span key={p.code} className={cn("rounded-full ring-2 ring-[var(--card-solid)]", i > 0 && "-ml-2")}>
+        <span key={p.code ?? `anon-${i}`} className={cn("rounded-full ring-2 ring-[var(--card-solid)]", i > 0 && "-ml-2")}>
           <Avatar code={p.code} src={p.avatarUrl} size={size} />
         </span>
       ))}

@@ -5,14 +5,14 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { ArrowRight, SearchX } from "lucide-react";
-import type { UserLite } from "@/lib/types";
+import type { Member } from "@/lib/types";
 import { formatCount, normalizeCode } from "@/lib/utils";
 import { Avatar } from "@/components/ui/Avatar";
 import { UserCode } from "@/components/ui/UserCode";
 import { IdentityBadge } from "@/components/ui/Badges";
 import { EmptyState } from "@/components/ui/Primitives";
 
-type Result = UserLite & { supporters: number; location: string; isMe: boolean };
+type Result = Member & { supporters: number; location: string; isMe: boolean };
 
 function Search() {
   const code = normalizeCode(useSearchParams().get("q") ?? "");

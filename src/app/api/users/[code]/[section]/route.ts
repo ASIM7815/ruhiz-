@@ -1,7 +1,7 @@
 import { code6, route } from "@/server/http";
 import { q } from "@/server/db";
 import { badRequest, notFound } from "@/server/errors";
-import { toUser, userCols } from "@/server/mappers";
+import { itemMasked, toMember, userCols } from "@/server/mappers";
 import { userIdByCode } from "@/server/repo/profiles";
 import { getPostsByIds } from "@/server/repo/posts";
 import { listContributionsByAuthor } from "@/server/repo/discussion";
@@ -29,9 +29,12 @@ export const GET = route<{ code: string; section: string }>({}, async ({ req, vi
     case "posts": {
       const kind = sp.get("kind");
       if (kind && !["photo", "video", "thought"].includes(kind)) throw badRequest("Invalid kind.");
+      // Identity Saver posts of a revealed account never appear on its public profile.
       const rows = await q<{ id: string }>(
-        `select id from posts where author_id = $1 and ($2::text is null or kind = $2) order by created_at desc limit 60`,
-        [uid, kind],
+        `select x.id from posts x join profiles p on p.user_id = x.author_id
+          where x.author_id = $1 and ($2::text is null or x.kind = $2) and (x.author_id = $3 or not ${itemMasked("p", "x.identity_mode")})
+          order by x.created_at desc limit 60`,
+        [uid, kind, viewer.id],
       );
       return getPostsByIds(viewer, rows.map((r) => r.id));
     }
@@ -47,7 +50,7 @@ export const GET = route<{ code: string; section: string }>({}, async ({ req, vi
                from user_supports s join profiles p on p.user_id = s.supported_id where s.supporter_id = $1 order by s.created_at desc limit 200`,
         [uid, viewer.id],
       );
-      return rows.map((r) => ({ ...toUser(r, "u_"), supportedByMe: Boolean(r.on_), isMe: String(r.u_code).trim() === viewer.code }));
+      return rows.map((r) => ({ ...toMember(r, "u_"), supportedByMe: Boolean(r.on_), isMe: String(r.u_code).trim() === viewer.code }));
     }
     default:
       throw notFound();

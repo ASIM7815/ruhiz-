@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { ArrowLeft, Ellipsis, Flag, Lightbulb, Loader2, MessageCircle, Search, Send, Smile, SquarePen, UserRound } from "lucide-react";
-import type { ConversationSummary, IdentityMode, Message, UserLite } from "@/lib/types";
+import type { ConversationSummary, IdentityMode, Member, Message } from "@/lib/types";
 import { api, revalidate } from "@/lib/api";
 import { clock, cn, dayLabel, normalizeCode, timeAgo } from "@/lib/utils";
 import { useStore } from "@/store/store";
@@ -16,7 +16,7 @@ import { EmptyState, Menu, MenuItem } from "@/components/ui/Primitives";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 
 const EMOJI = ["🙂", "🙏", "💙", "👍", "💪", "❤️"];
-type Thread = { id: string; context: string | null; with: (UserLite & { identity: IdentityMode }) | null; messages: Message[] };
+type Thread = { id: string; context: string | null; with: (Member & { identity: IdentityMode }) | null; messages: Message[] };
 
 function ThreadView({ id, isMd }: { id: string; isMd: boolean }) {
   const router = useRouter();

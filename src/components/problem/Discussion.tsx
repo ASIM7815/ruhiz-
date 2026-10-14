@@ -141,7 +141,7 @@ function Item({ c, childrenOf, depth, target }: { c: Contribution; childrenOf: M
     actions.openModal({
       type: "confirm",
       title: asModerator ? "Remove this contribution as a moderator?" : "Delete your contribution?",
-      text: asModerator ? `This removes #${c.author.code}'s contribution. Replies stay in the discussion. The action is logged.` : "Replies from others will stay in the discussion.",
+      text: asModerator ? `This removes ${c.author.code ? `#${c.author.code}'s` : "this"} contribution. Replies stay in the discussion. The action is logged.` : "Replies from others will stay in the discussion.",
       confirmLabel: asModerator ? "Remove" : "Delete",
       danger: true,
       onConfirm: async () => {

@@ -23,6 +23,7 @@ export type ModalState =
   | { type: "pledge"; solution: Solution }
   | { type: "people"; code: string; list: "supporters" | "supporting" }
   | { type: "editProfile" }
+  | { type: "revealIdentity" }
   | { type: "supportProfile"; listing: SupportListing }
   | { type: "requestSupport"; listing: SupportListing }
   | { type: "newMessage"; code?: string }

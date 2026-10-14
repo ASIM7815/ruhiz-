@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import useSWR from "swr";
-import { CalendarDays, Check, Flag, Forward, HandHelping, Image as ImageIcon, Lightbulb, MapPin, MessageCircle, PenLine, Play, SearchX, ShieldAlert, Sparkles, UserPlus, Video } from "lucide-react";
+import { CalendarDays, Check, EyeOff, Flag, Forward, HandHelping, Image as ImageIcon, Lightbulb, MapPin, MessageCircle, PenLine, Play, SearchX, ShieldAlert, Sparkles, UserPlus, Video } from "lucide-react";
 import type { Contribution, Post, Profile, Solution } from "@/lib/types";
 import { HELP_TYPES } from "@/lib/meta";
 import { api, revalidate } from "@/lib/api";
@@ -16,6 +16,7 @@ import { IdentityBadge } from "@/components/ui/Badges";
 import { EmptyState, Menu, MenuItem, Tabs } from "@/components/ui/Primitives";
 import { PostCard, PostSkeleton } from "@/components/feed/PostCard";
 import { ContributionList } from "@/components/profile/ContributionList";
+import { ProfileBanner } from "@/components/profile/ProfileBanner";
 import { SolutionCard } from "@/components/solution/SolutionCard";
 
 type Tab = "contributions" | "posts" | "photos" | "videos" | "thoughts";
@@ -125,9 +126,7 @@ export default function ProfilePage() {
   return (
     <div className="mx-auto max-w-[860px] space-y-4">
       <section className="card overflow-hidden">
-        <div className="relative h-32 bg-[radial-gradient(600px_200px_at_20%_0%,rgba(47,123,255,.45),transparent),radial-gradient(500px_200px_at_90%_100%,rgba(255,46,85,.25),transparent)] bg-elev sm:h-40">
-          <div className="absolute inset-0 bg-gradient-to-t from-[var(--card-solid)] via-transparent to-transparent" />
-        </div>
+        <ProfileBanner src={u.bannerUrl} editable={u.isMe} onChanged={() => mutate()} />
         <div className="relative px-4 pb-5 sm:px-6">
           <div className="-mt-14 flex flex-wrap items-end gap-4 sm:-mt-16">
             <Avatar code={code} src={u.avatarUrl} size="3xl" ring online={u.online} className="!size-28 sm:!size-32" />
@@ -175,6 +174,18 @@ export default function ProfilePage() {
             </div>
           </div>
 
+          {u.ownerView && (
+            <p className="mt-3 flex items-start gap-2 rounded-xl border border-sky-400/25 bg-sky-500/[.07] px-3 py-2 text-[0.8rem] leading-relaxed text-sky-100">
+              <EyeOff className="mt-0.5 size-4 shrink-0 text-sky-300" aria-hidden />
+              <span>
+                Your identity is hidden. Other members see only <b className="code-font">#{code}</b>: your photo, banner, headline, bio, location and expertise are visible to you alone.{" "}
+                <Link href="/settings#identity" className="font-semibold text-sky-300 underline-offset-2 hover:underline">
+                  Identity settings
+                </Link>
+              </span>
+            </p>
+          )}
+
           <div className="mt-4">
             <UserCode code={code} size="xl" link={false} copy verified={u.verifiedProfessional} />
             <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1.5">
@@ -212,10 +223,6 @@ export default function ProfilePage() {
             <div className="surface px-3.5 py-2">
               <span className="block text-[1.1rem] font-bold tabular-nums text-ink">{u.counts.posts + u.counts.contributions}</span>
               <span className="text-[0.74rem] text-muted">Contributions</span>
-            </div>
-            <div className="surface px-3.5 py-2">
-              <span className="block text-[1.1rem] font-bold tabular-nums text-emerald-300">{u.impact.solved}</span>
-              <span className="text-[0.74rem] text-muted">Problems solved</span>
             </div>
             <div className="surface px-3.5 py-2">
               <span className="block text-[1.1rem] font-bold tabular-nums text-ink">{formatCount(u.impact.helped)}</span>

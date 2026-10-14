@@ -7,11 +7,18 @@ import { drainStorageQueue } from "../storage";
  * interactions, ranking data) via FK cascades. Storage keys are queued in the same
  * transaction, then removed from Neon Object Storage.
  */
-export async function deletePost(postId: string, reason: string) {
+export async function deletePost(postId: string, by: { actorId: string; kind: "owner" | "admin"; reason?: string | null }) {
+  const gcReason = by.kind === "owner" ? "deleted by author" : "removed by administrator";
   await tx([
+    // Audit first (same transaction): who deleted it and in which capacity. No post content is kept.
+    {
+      text: `insert into post_deletion_log (post_id, author_id, deleted_by, actor_kind, reason, media_count)
+             select p.id, p.author_id, $2, $3, $4, (select count(*) from media m where m.post_id = p.id) from posts p where p.id = $1`,
+      params: [postId, by.actorId, by.kind, by.reason?.slice(0, 300) ?? null],
+    },
     {
       text: `insert into storage_gc (object_key, bucket, reason) select object_key, bucket, $2 from media where post_id = $1 on conflict do nothing`,
-      params: [postId, reason],
+      params: [postId, gcReason],
     },
     { text: `delete from posts where id = $1`, params: [postId] },
   ]);

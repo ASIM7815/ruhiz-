@@ -54,6 +54,8 @@ export function PostCard({ post: initial, detail, onRemoved }: { post: Post; det
   const [expanded, setExpanded] = useState(!!detail);
   const [pop, setPop] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  // Set while a delete is in flight (optimistic) and after it succeeds; cleared if the server refuses.
+  const [removed, setRemoved] = useState(false);
   useEffect(() => setPost(initial), [initial]);
 
   const isProblem = post.intent === "problem" && !!post.status;
@@ -96,21 +98,29 @@ export function PostCard({ post: initial, detail, onRemoved }: { post: Post; det
   const remove = (asModerator: boolean) =>
     actions.openModal({
       type: "confirm",
-      title: asModerator ? "Remove this post as a moderator?" : "Delete this post?",
+      title: asModerator ? "Delete this post as an administrator?" : "Delete this post?",
       text: asModerator
-        ? `This permanently removes #${post.author.code}'s post, its media, discussion and Solution Cards. The action is recorded in the moderation log.`
+        ? "This permanently deletes another member's post, its photos or video, its discussion and Solution Cards. It is recorded in the moderation log as an administrator deletion."
         : "This permanently deletes the post, its photos or video, and its discussion. This can't be undone.",
-      confirmLabel: asModerator ? "Remove post" : "Delete post",
+      confirmLabel: "Delete post",
       danger: true,
       requireReason: asModerator,
       onConfirm: async (reason) => {
-        await api(`/api/posts/${post.id}`, { method: "DELETE", body: asModerator ? { reason } : {} });
-        actions.toast(asModerator ? "Post removed" : "Post deleted", "info");
+        setRemoved(true); // hide immediately
+        try {
+          await api(`/api/posts/${post.id}`, { method: "DELETE", body: asModerator ? { reason } : {} });
+        } catch (e) {
+          setRemoved(false); // the server refused: put the post back and show why in the dialog
+          throw e;
+        }
+        actions.toast("Post deleted", "info");
         onRemoved?.(post.id);
         revalidate(...POST_KEYS);
         if (detail) router.push("/home");
       },
     });
+
+  if (removed) return null;
 
   return (
     <article className={cn("card anim-up overflow-hidden", !detail && "card-hover")}>
@@ -137,6 +147,7 @@ export function PostCard({ post: initial, detail, onRemoved }: { post: Post; det
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
               <IdentityBadge mode={post.identity} revealed={post.author.revealed ?? undefined} compact={post.identity === "saver"} />
+              {post.viewer.isOwner && !post.author.code && <span className="text-[0.72rem] text-faint">Your post · others can't see who posted it</span>}
               {post.location && (
                 <span className="inline-flex items-center gap-1 text-[0.72rem] text-muted">
                   <MapPin className="size-3" /> {post.location}
@@ -195,7 +206,7 @@ export function PostCard({ post: initial, detail, onRemoved }: { post: Post; det
                 )}
                 {post.viewer.canModerate && !post.viewer.isOwner && (
                   <MenuItem icon={ShieldAlert} danger onClick={() => (close(), remove(true))}>
-                    Remove (moderator)
+                    Delete post (admin)
                   </MenuItem>
                 )}
               </>
