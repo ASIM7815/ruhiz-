@@ -1,73 +1,155 @@
 "use client";
 
 import { useState } from "react";
-import { Bookmark, Heart, HeartHandshake, Image as ImageIcon, MessageCircle, PenLine, Play, ShieldCheck, Video } from "lucide-react";
+import { Bookmark, Code, FileText, Heart, MessageCircle, Play, ShieldCheck, Trophy } from "lucide-react";
 
-type Kind = "photo" | "video" | "thought";
+type PostType = "problem" | "experience" | "project" | "question";
 
-const TABS: { id: Kind; label: string; icon: typeof ImageIcon }[] = [
-  { id: "photo", label: "Photo", icon: ImageIcon },
-  { id: "video", label: "Video", icon: Video },
-  { id: "thought", label: "Thoughts", icon: PenLine },
+const TABS: { id: PostType; label: string }[] = [
+  { id: "problem", label: "Problem" },
+  { id: "experience", label: "Experience" },
+  { id: "project", label: "Project" },
+  { id: "question", label: "Question" },
 ];
 
-const COPY: Record<Kind, { title: string; body: string }> = {
-  photo: { title: "The shared reading room needs more chairs", body: "Sharing what our neighbourhood study space looks like right now. We need furniture and a few volunteers for evenings." },
-  video: { title: "How the water reaches our street", body: "A two-minute walk-through of where the supply fails along our lane, so people can see the problem for themselves." },
-  thought: { title: "I keep missing deadlines and I don't know why", body: "It isn't laziness. I sit down to start and freeze. Has anyone dealt with this, and what actually helped?" },
+const POSTS: Record<PostType, {
+  title: string;
+  body: string;
+  category: string;
+  author: string;
+  authorDesc: string;
+  tags: string[];
+  metrics: { supports: number; discussions: number; };
+  hasCode?: boolean;
+  hasProject?: boolean;
+  replies: { type: string; color: string; text: string }[];
+}> = {
+  problem: {
+    title: "Getting TLE in Leetcode Medium - need optimization help",
+    body: "I'm solving 'Longest Substring Without Repeating Characters' and getting Time Limit Exceeded. Tried two approaches - both are O(n²). I think I need sliding window but can't figure out the implementation. Has anyone solved this? Can share approach?",
+    category: "Coding & DSA",
+    author: "#K4M2N7",
+    authorDesc: "Identity Saver · 3rd year CSE",
+    tags: ["DSA", "LeetCode", "Sliding Window"],
+    metrics: { supports: 5, discussions: 12 },
+    hasCode: true,
+    replies: [
+      { type: "Experience", color: "#a78bfa", text: "I struggled with this exact problem! The key is maintaining a HashSet while moving the window. Took me 3 tries to get it right." },
+      { type: "Solution", color: "#60a5fa", text: "Use two pointers with a HashMap to track character positions. Here's my accepted solution with O(n) complexity..." },
+      { type: "Question", color: "#22d3ee", text: "Are you handling the edge case where all characters are unique?" },
+    ]
+  },
+  experience: {
+    title: "How I cracked Microsoft in 4th attempt - complete roadmap",
+    body: "After 3 rejections from Microsoft, I finally got the offer in my 4th attempt. Sharing my entire preparation journey: what worked, what didn't, and the exact timeline. Hope this helps someone in the same boat I was in.",
+    category: "Placement Prep",
+    author: "Rahul Verma",
+    authorDesc: "B.Tech CSE, NIT Trichy · Placed @ Microsoft",
+    tags: ["Microsoft", "Interview", "DSA", "System Design"],
+    metrics: { supports: 127, discussions: 45 },
+    replies: [
+      { type: "Question", color: "#22d3ee", text: "How much time did you spend on system design vs DSA?" },
+      { type: "Experience", color: "#a78bfa", text: "Your story resonates so much! I'm on my 2nd attempt with Amazon. Did you change your approach between attempts?" },
+      { type: "Opinion", color: "#fbbf24", text: "Persistence like this is what separates those who make it from those who give up. Inspiring post!" },
+    ]
+  },
+  project: {
+    title: "Built an AI-powered attendance system using face recognition",
+    body: "Created a real-time face recognition attendance system for our college. Uses OpenCV + Python + Firebase. 99.2% accuracy in testing. Demoed to admin - they're interested! Looking for feedback before I polish it for hackathons.",
+    category: "Project Help",
+    author: "Priya Sharma",
+    authorDesc: "B.Tech ECE, IIIT Hyderabad",
+    tags: ["AI/ML", "OpenCV", "Python", "Firebase"],
+    metrics: { supports: 34, discussions: 18 },
+    hasProject: true,
+    replies: [
+      { type: "Question", color: "#22d3ee", text: "What dataset did you use for training? Did you handle multiple lighting conditions?" },
+      { type: "Evidence", color: "#34d399", text: "Impressive accuracy! For production, consider adding liveness detection to prevent photo spoofing." },
+      { type: "Opinion", color: "#fbbf24", text: "This would be perfect for Smart India Hackathon. Have you considered adding a mobile app interface?" },
+    ]
+  },
+  question: {
+    title: "Which is better for placements: DSA mastery or project building?",
+    body: "I'm in 3rd year and confused about where to invest my time. Everyone says DSA is king for FAANG, but recruiters also ask about projects. I have time for only one - which should I prioritize? What did you focus on and did it work?",
+    category: "Career Guidance",
+    author: "#P9Q5R2",
+    authorDesc: "Identity Saver · 3rd year ME",
+    tags: ["Career", "DSA", "Projects", "Placements"],
+    metrics: { supports: 23, discussions: 67 },
+    replies: [
+      { type: "Experience", color: "#a78bfa", text: "I focused 70% on DSA and 30% on projects. Got through to Google. DSA clears interviews, projects give you talking points." },
+      { type: "Counter", color: "#fbbf24", text: "Disagree slightly - depends on the company. Startups care more about projects. FAANG cares more about DSA. Target accordingly." },
+      { type: "Evidence", color: "#34d399", text: "According to placement stats from our college, students with strong DSA + 1-2 solid projects have 85% placement rate in dream companies." },
+    ]
+  },
 };
 
-const REPLIES = [
-  { t: "Personal Experience", c: "#a78bfa", x: "I went through the same freeze. Splitting the first task into ten-minute pieces got me moving." },
-  { t: "Evidence", c: "#34d399", x: "Task-initiation difficulty is common, and structured starting routines have good support behind them." },
-  { t: "Counterargument", c: "#fbbf24", x: "Routines helped me less than changing the environment I worked in. Worth trying both." },
-];
-
-/** Abstract artwork stands in for member media. It shows the shape each kind of post takes. */
-function Media({ kind }: { kind: Exclude<Kind, "thought"> }) {
-  if (kind === "photo")
-    return (
-      // Portrait artwork, shown whole: RUHIZ never crops a photo.
-      <div className="l-media mx-auto" style={{ aspectRatio: "4 / 5", maxWidth: 300, background: "linear-gradient(180deg,#1d2f7a 0%,#2a4fc4 38%,#7b5cf0 68%,#ff6b9d 100%)" }}>
-        <svg viewBox="0 0 300 375" className="size-full" aria-hidden preserveAspectRatio="xMidYMid meet">
-          <circle cx="215" cy="92" r="34" fill="#ffd9e3" opacity=".9" />
-          <path d="M0 300 L70 215 L130 270 L200 190 L300 295 L300 375 L0 375Z" fill="#0b1647" opacity=".85" />
-          <path d="M0 335 L90 270 L160 318 L240 258 L300 320 L300 375 L0 375Z" fill="#050a26" />
-        </svg>
-      </div>
-    );
+function CodeSnippet() {
   return (
-    <div className="l-media" style={{ aspectRatio: "16 / 9", background: "linear-gradient(120deg,#0f1f66,#2f58d8 50%,#22d3ee)" }}>
-      <svg viewBox="0 0 320 180" className="size-full" aria-hidden preserveAspectRatio="xMidYMid slice">
-        <path d="M0 140 Q80 90 160 130 T320 110 L320 180 L0 180Z" fill="#06103a" opacity=".7" />
-      </svg>
-      <span className="absolute left-1/2 top-1/2 grid size-14 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border-2 border-white/85 bg-black/35 backdrop-blur-sm">
-        <Play className="ml-0.5 size-6 fill-white text-white" />
-      </span>
+    <div className="mt-3 rounded-lg border border-[var(--l-line)] bg-black/60 p-3 font-mono text-[0.75rem]">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[var(--l-muted)]">Python</span>
+        <Code className="size-3.5 text-cyan-400" />
+      </div>
+      <code className="block text-cyan-300">
+        <span className="text-violet-400">def</span> <span className="text-amber-300">lengthOfLongest</span>(s):
+        <br />
+        &nbsp;&nbsp;<span className="text-slate-400"># O(n²) approach - TLE</span>
+        <br />
+        &nbsp;&nbsp;<span className="text-rose-400">...</span>
+      </code>
+    </div>
+  );
+}
+
+function ProjectShowcase() {
+  return (
+    <div className="mt-3 rounded-lg border border-violet-400/30 bg-gradient-to-br from-violet-500/10 to-transparent p-3">
+      <div className="flex items-center gap-2 mb-2">
+        <Trophy className="size-4 text-amber-400" />
+        <span className="text-[0.8rem] font-semibold text-white">Project Demo</span>
+      </div>
+      <div className="relative aspect-video overflow-hidden rounded-md bg-black/40">
+        <div className="absolute inset-0 bg-gradient-to-br from-blue-500/20 to-cyan-500/20" />
+        <Play className="absolute left-1/2 top-1/2 size-12 -translate-x-1/2 -translate-y-1/2 text-white/80" />
+      </div>
+      <div className="mt-2 flex items-center gap-2">
+        <a href="#" className="text-[0.75rem] text-cyan-400 hover:underline">View on GitHub →</a>
+        <span className="text-[0.7rem] text-[var(--l-muted)]">•</span>
+        <span className="text-[0.75rem] text-[var(--l-muted)]">Demo video</span>
+      </div>
     </div>
   );
 }
 
 export function Preview() {
-  const [kind, setKind] = useState<Kind>("photo");
-  const c = COPY[kind];
+  const [activePost, setActivePost] = useState<PostType>("problem");
+  const post = POSTS[activePost];
 
   return (
     <section id="community" className="l-section" aria-labelledby="community-title">
       <div className="l-wrap">
         <div className="grid items-center gap-14 lg:grid-cols-[0.8fr_1.2fr]">
           <div>
-            <span className="l-eyebrow" data-reveal><i /> Inside the community</span>
+            <span className="l-eyebrow" data-reveal><i /> Inside the platform</span>
             <h2 id="community-title" className="l-h2 l-display mt-5" data-reveal>
-              A feed where every post <span className="l-grad">goes somewhere</span>.
+              Real posts from <span className="l-grad">real engineering students</span>.
             </h2>
             <p className="l-lead mt-5" data-reveal>
-              Share a photo, a video or a few honest sentences. Photos and videos always appear whole, in their own shape, never cropped. Replies are labelled so you can tell a lived experience from evidence from an opinion.
+              From DSA struggles to placement victories, project showcases to career questions—see exactly what engineers are discussing, building, and solving together.
             </p>
             <div className="l-tabs mt-8" role="tablist" aria-label="Post types" data-reveal>
               {TABS.map((t) => (
-                <button key={t.id} role="tab" id={`tab-${t.id}`} aria-selected={kind === t.id} aria-controls="preview-panel" className="l-tab" onClick={() => setKind(t.id)}>
-                  <t.icon className="size-4" /> {t.label}
+                <button 
+                  key={t.id} 
+                  role="tab" 
+                  id={`tab-${t.id}`} 
+                  aria-selected={activePost === t.id} 
+                  aria-controls="preview-panel" 
+                  className="l-tab" 
+                  onClick={() => setActivePost(t.id)}
+                >
+                  {t.label}
                 </button>
               ))}
             </div>
@@ -75,39 +157,76 @@ export function Preview() {
 
           <div className="l-frame" data-parallax="0.06" data-reveal>
             <div className="l-device">
-              <div id="preview-panel" role="tabpanel" aria-labelledby={`tab-${kind}`} className="l-glass l-post">
-                <p className="mb-3 inline-flex items-center gap-2 rounded-full border border-[var(--l-line)] bg-black/30 px-3 py-1 text-[0.7rem] font-semibold uppercase tracking-wider text-[var(--l-muted)]">
-                  Illustration · an example, not a real post
-                </p>
-                <div className="flex items-center gap-3">
-                  <span className="grid size-11 place-items-center rounded-full bg-gradient-to-br from-[#2f6bff] to-[#0b1f66] text-white">
-                    <ShieldCheck className="size-5" />
-                  </span>
-                  <div>
-                    <p className="text-[0.92rem] font-semibold text-white">Anonymous member</p>
-                    <p className="text-[0.76rem] text-[var(--l-muted)]">Identity Saver · only a code is shown</p>
+              <div id="preview-panel" role="tabpanel" aria-labelledby={`tab-${activePost}`} className="l-glass l-post">
+                {/* Post Header */}
+                <div className="flex items-start gap-3">
+                  <div className="flex size-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-cyan-400 to-blue-500 text-sm font-bold text-white">
+                    {post.author.startsWith("#") ? <ShieldCheck className="size-5" /> : post.author[0]}
                   </div>
-                  <span className="l-pill ml-auto" style={{ ["--pc" as string]: "rgba(255,46,85,.4)", ["--pt" as string]: "#ffc2cf", ["--pb" as string]: "rgba(255,46,85,.12)" }}>{kind === "thought" ? "Seeking support" : "Problem"}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[0.92rem] font-semibold text-white">{post.author}</p>
+                    <p className="text-[0.76rem] text-[var(--l-muted)]">{post.authorDesc}</p>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-blue-500/20 px-2.5 py-1 text-[0.7rem] font-medium text-blue-300">
+                    {post.category}
+                  </span>
                 </div>
 
-                <h3 key={kind} className="l-display l-id-enter mt-4 text-[1.2rem] font-bold leading-snug text-white">{c.title}</h3>
-                <p className="mt-1.5 text-[0.92rem] leading-relaxed text-[var(--l-ink2)]">{c.body}</p>
-                {kind !== "thought" && <div className="mt-4"><Media kind={kind} /></div>}
+                {/* Post Content */}
+                <h3 key={activePost} className="l-display l-id-enter mt-4 text-[1.2rem] font-bold leading-snug text-white">
+                  {post.title}
+                </h3>
+                <p className="mt-1.5 text-[0.92rem] leading-relaxed text-[var(--l-ink2)]">
+                  {post.body}
+                </p>
 
-                <div className="mt-4 flex flex-wrap items-center gap-2" aria-hidden>
-                  <span className="l-act on"><HeartHandshake className="size-4" /> Support</span>
-                  <span className="l-act"><Heart className="size-4 text-[#ff6b9d]" /> Care</span>
-                  <span className="l-act"><MessageCircle className="size-4" /> Discuss</span>
-                  <span className="l-act ml-auto"><Bookmark className="size-4" /></span>
+                {/* Code Snippet for Problem Posts */}
+                {post.hasCode && <CodeSnippet />}
+
+                {/* Project Showcase for Project Posts */}
+                {post.hasProject && <ProjectShowcase />}
+
+                {/* Tags */}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {post.tags.map(tag => (
+                    <span key={tag} className="rounded-full bg-white/5 px-2.5 py-0.5 text-[0.7rem] text-[var(--l-muted)]">
+                      {tag}
+                    </span>
+                  ))}
                 </div>
 
+                {/* Engagement Metrics */}
+                <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-[var(--l-line)] pt-3" aria-hidden>
+                  <span className="l-act on">
+                    <Heart className="size-4 text-[#ff6b9d]" /> {post.metrics.supports} Support
+                  </span>
+                  <span className="l-act">
+                    <MessageCircle className="size-4" /> {post.metrics.discussions} Discuss
+                  </span>
+                  <span className="l-act ml-auto">
+                    <Bookmark className="size-4" /> Save
+                  </span>
+                </div>
+
+                {/* Replies */}
                 <div className="mt-4 space-y-2">
-                  {(kind === "thought" ? REPLIES : REPLIES.slice(0, 2)).map((r) => (
-                    <div key={r.t} className="l-reply" style={{ ["--tc" as string]: r.c }}>
-                      <b>{r.t}</b>
-                      {r.x}
+                  <p className="text-[0.75rem] font-semibold uppercase tracking-wider text-[var(--l-muted)]">
+                    {post.replies.length} Contributions
+                  </p>
+                  {post.replies.map((r, idx) => (
+                    <div key={idx} className="l-reply" style={{ ["--tc" as string]: r.color }}>
+                      <b>{r.type}</b>
+                      {r.text}
                     </div>
                   ))}
+                </div>
+
+                {/* Example Indicator */}
+                <div className="mt-4 flex items-center gap-2 rounded-lg border border-[var(--l-line)] bg-black/20 px-3 py-2">
+                  <FileText className="size-4 text-[var(--l-muted)]" />
+                  <p className="text-[0.7rem] text-[var(--l-muted)]">
+                    Example post illustration · Real content style from actual students
+                  </p>
                 </div>
               </div>
             </div>

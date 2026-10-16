@@ -10,6 +10,7 @@ import { Hero } from "./Hero";
 import { Problem } from "./Problem";
 import { Journey } from "./Journey";
 import { Preview } from "./Preview";
+import { Stats } from "./Stats";
 import { Features } from "./Features";
 import { Privacy } from "./Privacy";
 import { Closing } from "./Closing";
@@ -44,6 +45,7 @@ export function Landing({ accountDeleted }: { accountDeleted?: boolean }) {
         <Problem />
         <Journey />
         <Preview />
+        <Stats />
         <Features />
         <Privacy />
       </main>

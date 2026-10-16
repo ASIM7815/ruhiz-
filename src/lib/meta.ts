@@ -62,19 +62,35 @@ export const TONES = {
 } satisfies Record<string, Tone>;
 
 export const CATEGORIES: Record<CategoryId, { label: string; icon: LucideIcon; tone: Tone; posts: number; blurb: string }> = {
+  // === NEW ENGINEERING-FOCUSED CATEGORIES (Primary) ===
+  "coding-help": { label: "Coding & DSA", icon: Cpu, tone: TONES.cyan, posts: 15200, blurb: "Algorithm doubts, debugging, competitive programming" },
+  "project-help": { label: "Project Help", icon: Construction, tone: TONES.blue, posts: 8900, blurb: "Building, debugging, architecture advice" },
+  "placement-prep": { label: "Placement Prep", icon: Briefcase, tone: TONES.amber, posts: 12400, blurb: "Interviews, aptitude, resume, company experiences" },
+  "exam-strategies": { label: "Exam Strategies", icon: GraduationCap, tone: TONES.violet, posts: 9500, blurb: "Study techniques, subject help, time management" },
+  "hackathons": { label: "Hackathons & Competitions", icon: Sparkles, tone: TONES.pink, posts: 4200, blurb: "Team formation, project ideas, submission help" },
+  "campus-life": { label: "Campus Life", icon: Backpack, tone: TONES.indigo, posts: 7300, blurb: "Hostel, events, clubs, campus experiences" },
+  "career-guidance": { label: "Career Guidance", icon: Landmark, tone: TONES.orange, posts: 6800, blurb: "Internships, skill development, industry insights" },
+  "mental-wellness": { label: "Mental Wellness", icon: Brain, tone: TONES.red, posts: 5600, blurb: "Exam stress, imposter syndrome, burnout" },
+  "research-papers": { label: "Research & Publications", icon: Microscope, tone: TONES.teal, posts: 3100, blurb: "Paper writing, conferences, academic projects" },
+  "tech-exploration": { label: "Tech Exploration", icon: BookOpen, tone: TONES.sky, posts: 5900, blurb: "New technologies, learning paths, tool recommendations" },
+  "entrepreneurship": { label: "Entrepreneurship", icon: Package, tone: TONES.emerald, posts: 2800, blurb: "Startup ideas, funding, building products" },
+  "lab-practical": { label: "Labs & Practicals", icon: Activity, tone: TONES.lime, posts: 4400, blurb: "Equipment, experiments, safety, report writing" },
+  "student-life": { label: "Student Life", icon: Users, tone: TONES.slate, posts: 3900, blurb: "Relationships, family, personal challenges" },
+  
+  // === OLD CATEGORIES (Deprecated - kept for backward compatibility) ===
+  // These map to new categories or remain for existing database content
   "mental-health": { label: "Mental Health", icon: Brain, tone: TONES.red, posts: 12400, blurb: "Anxiety, burnout, loneliness and recovery stories" },
-  education: { label: "Education", icon: GraduationCap, tone: TONES.blue, posts: 8700, blurb: "Access to learning, resources, exams and teaching" },
-  "student-life": { label: "Student Life", icon: Backpack, tone: TONES.indigo, posts: 4300, blurb: "Hostels, campus life, first-gen students" },
-  career: { label: "Career & Jobs", icon: Briefcase, tone: TONES.amber, posts: 5800, blurb: "Layoffs, job search, workplace challenges" },
-  relationships: { label: "Relationships", icon: Heart, tone: TONES.pink, posts: 6100, blurb: "Partners, friendships, boundaries" },
-  family: { label: "Family", icon: Users, tone: TONES.orange, posts: 3900, blurb: "Caregiving, parenting and family conflict" },
-  technology: { label: "Technology", icon: Cpu, tone: TONES.cyan, posts: 3400, blurb: "Digital access, tools and tech problems" },
-  environment: { label: "Environment", icon: Leaf, tone: TONES.emerald, posts: 2800, blurb: "Waste, water, climate and local ecology" },
-  community: { label: "Community", icon: HandHelping, tone: TONES.violet, posts: 4700, blurb: "Neighbourhood issues and collective action" },
-  finance: { label: "Finance", icon: Wallet, tone: TONES.teal, posts: 3100, blurb: "Debt, budgeting and financial stress" },
-  health: { label: "Health", icon: Activity, tone: TONES.sky, posts: 2600, blurb: "Access to care, caregiving and wellbeing" },
+  "education": { label: "Education", icon: GraduationCap, tone: TONES.blue, posts: 8700, blurb: "Access to learning, resources, exams and teaching" },
+  "career": { label: "Career & Jobs", icon: Briefcase, tone: TONES.amber, posts: 5800, blurb: "Layoffs, job search, workplace challenges" },
+  "relationships": { label: "Relationships", icon: Heart, tone: TONES.pink, posts: 6100, blurb: "Partners, friendships, boundaries" },
+  "family": { label: "Family", icon: Users, tone: TONES.orange, posts: 3900, blurb: "Caregiving, parenting and family conflict" },
+  "technology": { label: "Technology", icon: Cpu, tone: TONES.cyan, posts: 3400, blurb: "Digital access, tools and tech problems" },
+  "environment": { label: "Environment", icon: Leaf, tone: TONES.emerald, posts: 2800, blurb: "Waste, water, climate and local ecology" },
+  "community": { label: "Community", icon: HandHelping, tone: TONES.violet, posts: 4700, blurb: "Neighbourhood issues and collective action" },
+  "finance": { label: "Finance", icon: Wallet, tone: TONES.teal, posts: 3100, blurb: "Debt, budgeting and financial stress" },
+  "health": { label: "Health", icon: Activity, tone: TONES.sky, posts: 2600, blurb: "Access to care, caregiving and wellbeing" },
   "self-improvement": { label: "Self Improvement", icon: Sprout, tone: TONES.lime, posts: 4900, blurb: "Habits, discipline and personal growth" },
-  infrastructure: { label: "Infrastructure", icon: Building, tone: TONES.slate, posts: 1900, blurb: "Water, roads, power and public services" },
+  "infrastructure": { label: "Infrastructure", icon: Building, tone: TONES.slate, posts: 1900, blurb: "Water, roads, power and public services" },
 };
 
 export const CONTRIBUTION_TYPES: Record<ContributionType, { label: string; short: string; icon: LucideIcon; tone: Tone; hint: string }> = {
@@ -130,27 +146,27 @@ export const INTENT_LABEL: Record<string, string> = {
 };
 
 export const TRENDING_TOPICS: { label: string; category: CategoryId; count: number }[] = [
-  { label: "Mental Health", category: "mental-health", count: 12400 },
-  { label: "Study & Exams", category: "education", count: 8700 },
-  { label: "Relationships", category: "relationships", count: 6100 },
-  { label: "Career & Jobs", category: "career", count: 5800 },
-  { label: "Self Improvement", category: "self-improvement", count: 4900 },
-  { label: "Student Life", category: "student-life", count: 4300 },
-  { label: "Family", category: "family", count: 3900 },
-  { label: "Technology", category: "technology", count: 3400 },
+  { label: "Coding & DSA", category: "coding-help", count: 15200 },
+  { label: "Placement Prep", category: "placement-prep", count: 12400 },
+  { label: "Exam Strategies", category: "exam-strategies", count: 9500 },
+  { label: "Project Help", category: "project-help", count: 8900 },
+  { label: "Campus Life", category: "campus-life", count: 7300 },
+  { label: "Career Guidance", category: "career-guidance", count: 6800 },
+  { label: "Tech Exploration", category: "tech-exploration", count: 5900 },
+  { label: "Mental Wellness", category: "mental-wellness", count: 5600 },
 ];
 
 export const SUPPORT_AREAS = [
-  "Anxiety",
   "Exam stress",
-  "Loneliness",
+  "Placement anxiety",
+  "Coding challenges",
+  "Project guidance",
+  "Imposter syndrome",
   "Burnout",
-  "Grief & loss",
-  "Breakups",
-  "Family conflict",
-  "Career stress",
-  "Self-esteem",
-  "Homesickness",
-  "Caregiving",
-  "Parenting",
+  "Career confusion",
+  "Interview prep",
+  "Study strategies",
+  "Time management",
+  "Peer pressure",
+  "Academic struggles",
 ];

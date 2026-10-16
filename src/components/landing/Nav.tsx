@@ -6,10 +6,10 @@ import { Menu, X } from "lucide-react";
 import { getLenis, scrollToSection } from "./scroll";
 
 export const NAV_LINKS = [
-  { href: "#why", label: "Why RUHIZ" },
+  { href: "#why", label: "For Students" },
   { href: "#how", label: "How It Works" },
   { href: "#features", label: "Features" },
-  { href: "#community", label: "Community" },
+  { href: "#stats", label: "Community" },
   { href: "#privacy", label: "Privacy" },
 ];
 
@@ -77,7 +77,8 @@ export function Nav() {
             Sign In
           </Link>
           <Link href="/sign-up" className="l-btn l-btn-primary !h-10 !px-4 !text-[0.86rem]">
-            Sign Up
+            <span className="hidden sm:inline">Join the Community</span>
+            <span className="sm:hidden">Join</span>
           </Link>
           <button
             type="button"

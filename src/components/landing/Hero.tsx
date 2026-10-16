@@ -121,42 +121,41 @@ export function Hero() {
     <section id="top" ref={root} className="l-hero" data-hero aria-labelledby="hero-title">
       <div className="l-hero-grid">
         <div data-hero-copy>
-          <span className="l-eyebrow l-rise" style={{ ["--d" as string]: "0.05s" }}>
-            <i /> A social platform built around real problems
-          </span>
+          
 
-          <h1 id="hero-title" className="l-h1 l-display" aria-label="You’re not alone. Real people. Real support.">
+          <h1 id="hero-title" className="l-h1 l-display" aria-label="Your Engineering Journey Starts Here. Learn. Build. Showcase.">
             <span className="l-line">
-              <Word i={0} text="You’re" />
-              <Word i={1} text="not" />
-              <Word i={2} text="alone." />
+              <Word i={0} text="Your" />
+              <Word i={1} text="Engineering" />
+              <Word i={2} text="Journey" />
             </span>
             <span className="l-line small">
-              <Word i={3} text="Real" tone="aqua" />
-              <Word i={4} text="people." tone="aqua" />
+              <Word i={3} text="Starts" tone="aqua" />
+              <Word i={4} text="Here." tone="aqua" />
             </span>
             <span className="l-line small">
-              <Word i={5} text="Real" tone="rose" />
-              <Word i={6} text="support." tone="rose" />
+              <Word i={5} text="Learn." tone="rose" />
+              <Word i={6} text="Build." tone="rose" />
+              <Word i={7} text="Showcase." tone="rose" />
             </span>
           </h1>
 
           <p className="l-hero-copy-text l-rise" style={{ ["--d" as string]: "0.85s" }}>
-            RUHIZ connects people facing real problems with people who understand, knowledge that helps, and resources that move conversations toward meaningful outcomes.
+            RUHIZ connects 15,000+ engineering students tackling real challenges—from DSA problems and project ideas to placement prep and campus life. Share your struggles, build solutions together, and showcase your growth.
           </p>
 
           <div className="l-rise mt-8 flex flex-wrap gap-3" style={{ ["--d" as string]: "1s" }}>
             <Link href="/sign-up" className="l-btn l-btn-primary">
-              Find Your Community <ArrowRight className="size-4" />
+              Join the Community <ArrowRight className="size-4" />
             </Link>
             <AnchorLink href="#how" className="l-btn l-btn-glass">
-              Explore RUHIZ
+              See How It Works
             </AnchorLink>
           </div>
 
           <p className="l-assure l-rise" style={{ ["--d" as string]: "1.15s" }}>
             <ShieldCheck className="mt-0.5 size-4 shrink-0 text-sky-400" />
-            <span>Join with just an email. Your name is never public unless you choose to reveal it, and you can take part as Identity Saver with only a code.</span>
+            <span>Trusted by students from IITs, NITs, and 120+ colleges. Ask questions anonymously or build your public portfolio—you decide.</span>
           </p>
         </div>
 

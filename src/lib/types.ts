@@ -3,9 +3,23 @@
 export type IdentityMode = "saver" | "revealer";
 
 export type CategoryId =
+  // New engineering-focused categories (primary)
+  | "coding-help"
+  | "project-help"
+  | "placement-prep"
+  | "exam-strategies"
+  | "hackathons"
+  | "campus-life"
+  | "career-guidance"
+  | "mental-wellness"
+  | "research-papers"
+  | "tech-exploration"
+  | "entrepreneurship"
+  | "lab-practical"
+  | "student-life"
+  // Old categories (deprecated - kept for backward compatibility)
   | "mental-health"
   | "education"
-  | "student-life"
   | "career"
   | "relationships"
   | "family"
